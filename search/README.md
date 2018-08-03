@@ -1,6 +1,6 @@
 # search@ml2lm
 
-The search part are mainly based my other project [auto-learn-model](https://github.com/yakolle/auto-learn-model). 
+The search part mainly base on my other project [auto-learn-model](https://github.com/yakolle/auto-learn-model). 
 
 But that project have some flaws, such as lack of flexibility in the learning processes, e.g. training part can't easily interact with the previous processes, the meta context infos(i.e. superparameters, evaluations, validations) isolate from the very process during transforming/encoding/selecting/training. So I will rewrite it.
 

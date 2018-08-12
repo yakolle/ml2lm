@@ -11,8 +11,7 @@ from calc.model.units.SegTriangleLayer import SegTriangleLayer
 
 
 def init_tensorflow():
-    session_conf = tf.ConfigProto(intra_op_parallelism_threads=4, inter_op_parallelism_threads=1,
-                                  use_per_session_threads=1)
+    session_conf = tf.ConfigProto(intra_op_parallelism_threads=4, inter_op_parallelism_threads=1)
     bk.set_session(tf.Session(graph=tf.get_default_graph(), config=session_conf))
 
 

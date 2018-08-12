@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from keras.layers import Embedding, Flatten, Dense, BatchNormalization, Activation, Dropout, Lambda
 
+from calc.model.units.SegRightAngleLayer import SegRightAngleLayer
 from calc.model.units.SegTriangleLayer import SegTriangleLayer
 
 
@@ -45,16 +46,16 @@ def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
     return seg_dim
 
 
-def to_nn_data(x, oh_indices=None, cat_indices=None, seg_indices=None, num_indices=None):
+def to_tnn_data(x, oh_indices=None, cat_indices=None, seg_indices=None, num_indices=None):
     nn_data = {}
     if oh_indices is not None:
         nn_data['ohs'] = x[:, oh_indices]
     if cat_indices is not None:
-        cat_indices['ohs'] = x[:, oh_indices]
+        cat_indices['cats'] = x[:, cat_indices]
     if seg_indices is not None:
-        seg_indices['ohs'] = x[:, oh_indices]
+        seg_indices['segs'] = x[:, seg_indices]
     if num_indices is not None:
-        num_indices['ohs'] = x[:, oh_indices]
+        num_indices['nums'] = x[:, num_indices]
     return nn_data
 
 
@@ -82,10 +83,13 @@ def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
     return embeds
 
 
-def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_input_val_range=(0, 1)):
+def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_input_val_range=(0, 1)):
     segments = []
     for i, out_dim in enumerate(seg_out_dims):
         segment = Lambda(lambda segs: segs[:, i, None])(seg_input)
-        segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range)(segment)
+        if not seg_type:
+            segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range)(segment)
+        else:
+            segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range)(segment)
         segments.append(segment)
     return segments

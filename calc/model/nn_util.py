@@ -33,7 +33,7 @@ def get_out_dim(vocab_size, scale=10, shrink_factor=0.5, max_out_dim=None):
     elif vocab_size <= 40:
         out_dim = max(10, int(shrink_factor * vocab_size // 2))
     else:
-        out_dim = max(int(shrink_factor * 20), int(shrink_factor * vocab_size / np.log2(vocab_size / scale)))
+        out_dim = max(10, int(shrink_factor * 20), int(shrink_factor * vocab_size / np.log2(vocab_size / scale)))
     out_dim = out_dim if max_out_dim is None else max_out_dim
     return out_dim
 
@@ -43,6 +43,14 @@ def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
 
     seg_dim = seg_dim if max_seg_dim is None else max_seg_dim
     return seg_dim
+
+
+def get_seg_num_by_value(x, precision=4, shrink_factor=0.5):
+    val_mean = np.mean(np.abs(x))
+    cur_precision = np.round(np.log10(val_mean))
+    x = (x * 10 ** (precision - cur_precision)).astype(np.int64)
+    val_cnt = len(np.unique(x))
+    return get_seg_num(val_cnt, shrink_factor=shrink_factor)
 
 
 def to_tnn_data(x, oh_indices=None, cat_indices=None, seg_indices=None, num_indices=None):

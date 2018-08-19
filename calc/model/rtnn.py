@@ -68,16 +68,13 @@ def predict(x, rtnns, res_shrinkage, predict_batch_size=50000):
 
 
 def merge(tnn_models, res_shrinkage=0.1):
-    inputs = tnn_models[-1].inputs
-    for tnn in tnn_models:
-        tnn.inputs = inputs
-
     outputs = []
     for tnn in tnn_models[:-1]:
         outputs.append(Lambda(lambda x: res_shrinkage * x)(tnn.output))
     outputs.append(tnn_models[-1].output)
     output = Add()(outputs)
 
-    rtsnn = Model(inputs, output)
-    rtsnn.compile(loss=tnn_models[-1].loss, optimizer=tnn_models[-1].optimizer, metrics=tnn_models[-1].metrics)
+    tnn = tnn_models[-1]
+    rtsnn = Model(tnn.inputs, output)
+    rtsnn.compile(loss=tnn.loss, optimizer=tnn.optimizer, metrics=tnn.metrics)
     return rtsnn

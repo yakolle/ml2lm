@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(name='ml2lm',
       version='0.1',
@@ -6,5 +6,5 @@ setup(name='ml2lm',
       url='http://github.com/yakolle/ml2lm',
       author='Yakolle Zhang',
       license='MIT',
-      packages=['calc'],
+      packages=find_packages(),
       zip_safe=False)

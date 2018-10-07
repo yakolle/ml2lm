@@ -2,7 +2,8 @@ from keras import Input, Model
 from keras.layers import concatenate
 from keras.optimizers import Adam
 
-from ml2lm.calc import FMLayer
+from ml2lm.calc.model.nn_util import *
+from ml2lm.calc.model.units.FMLayer import FMLayer
 
 
 def get_simple_linear_output(flat):

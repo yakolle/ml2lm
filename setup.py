@@ -7,4 +7,4 @@ setup(name='ml2lm',
       author='Yakolle Zhang',
       license='MIT',
       packages=find_packages(),
-      zip_safe=False)
+      zip_safe=False, install_requires=['keras', 'tensorflow'])

@@ -1,6 +1,3 @@
-from calc.model.tnn import *
-
-
 def get_btnn_model(x, y, get_output=get_simple_linear_output, compile_func=compile_default_mse_output, cat_in_dims=None,
                    cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0, seg_x_val_range=(0, 1), block_num=3,
                    shrink_factor=1.0, seg_y_dim=50, prev_block_weight_files=None, use_fm=False, seg_flag=True,

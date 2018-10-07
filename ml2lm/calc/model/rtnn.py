@@ -1,8 +1,6 @@
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 from keras.layers import Add
 
-from calc.model.tnn import *
-
 
 def simple_train(tnn_model, tx, ty, vx=None, vy=None, epochs=300, batch_size=1024, model_save_dir='.', model_id='rtnn',
                  lr_patience=30, stop_patience=50):

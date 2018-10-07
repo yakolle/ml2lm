@@ -4,10 +4,10 @@ import random
 import keras.backend as bk
 import numpy as np
 import tensorflow as tf
+from calc.model.units.SegRightAngleLayer import SegRightAngleLayer
 from keras.layers import Embedding, Flatten, Dense, BatchNormalization, Activation, Dropout, Lambda
 
-from calc.model.units.SegRightAngleLayer import SegRightAngleLayer
-from calc.model.units.SegTriangleLayer import SegTriangleLayer
+from ml2lm.calc.model.units.SegTriangleLayer import SegTriangleLayer
 
 
 def init_tensorflow():

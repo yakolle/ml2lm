@@ -94,7 +94,7 @@ def get_tnn_block(block_no, get_output=get_simple_linear_output, oh_input=None, 
     flat = concatenate([flat, extra_feats]) if extra_feats is not None else flat
 
     flat = add_dense(flat, hidden_units, bn=True, dropout=hidden_dropout)
-    tnn_block = get_output(flat, oh_input, cat_input, seg_input, num_input)
+    tnn_block = get_output(flat)
     tnn_block.name = f'out{block_no}'
     return tnn_block
 

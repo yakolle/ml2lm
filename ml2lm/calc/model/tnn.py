@@ -6,9 +6,9 @@ from ml2lm.calc.model.nn_util import *
 from ml2lm.calc.model.units.FMLayer import FMLayer
 
 
-def get_simple_linear_output(flat):
+def get_simple_linear_output(flat, name=None):
     flat = add_dense(flat, 64, bn=False, dropout=0.05)
-    return Dense(1)(flat)
+    return Dense(1, name=name)(flat)
 
 
 def compile_default_mse_output(outputs, oh_input=None, cat_input=None, seg_input=None, num_input=None,
@@ -26,9 +26,9 @@ def compile_default_mse_output(outputs, oh_input=None, cat_input=None, seg_input
     return dnn
 
 
-def get_simple_sigmoid_output(flat):
+def get_simple_sigmoid_output(flat, name=None):
     flat = add_dense(flat, 64, bn=False, dropout=0.05)
-    return Dense(1, activation='sigmoid')(flat)
+    return Dense(1, activation='sigmoid', name=name)(flat)
 
 
 def compile_default_bce_output(output, oh_input=None, cat_input=None, seg_input=None, num_input=None,
@@ -80,7 +80,7 @@ def get_tnn_block(block_no, get_output=get_simple_linear_output, oh_input=None, 
         feats.append(num_input)
     if pre_output is not None:
         feats.append(pre_output)
-    feats = concatenate(feats)
+    feats = concatenate(feats) if len(feats) > 1 else feats[0]
 
     extra_feats = get_extra_layers(x, feats) if get_extra_layers is not None else None
 
@@ -94,8 +94,7 @@ def get_tnn_block(block_no, get_output=get_simple_linear_output, oh_input=None, 
     flat = concatenate([flat, extra_feats]) if extra_feats is not None else flat
 
     flat = add_dense(flat, hidden_units, bn=True, dropout=hidden_dropout)
-    tnn_block = get_output(flat)
-    tnn_block.name = f'out{block_no}'
+    tnn_block = get_output(flat, name=f'out{block_no}')
     return tnn_block
 
 

@@ -4,4 +4,4 @@ The calc part is mainly inspired by the notion of 'Interpolation At Large Scope 
 
 And so far, it is developed on the differentiable platform like keras(tensorflow).
 
-To do: speed up converge using nested validation(self attention concept)
+To do: speed up converge using nested validation(add meta indicators to calc)

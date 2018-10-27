@@ -1,3 +1,5 @@
+import inspect
+
 from keras import backend as bk
 from keras.engine.topology import Layer, InputSpec
 from keras.initializers import Constant, RandomUniform
@@ -53,8 +55,10 @@ class SegRightAngleLayer(Layer):
         self.built = True
 
     def call(self, inputs, **kwargs):
+        seg_func = self.seg_func() if inspect.isclass(self.seg_func) else self.seg_func
+
         left_out = self.left_pos - inputs
-        middle_out = None if self.middle_pos is None else self.seg_func(inputs - self.middle_pos) * bk.sign(
+        middle_out = None if self.middle_pos is None else seg_func(inputs - self.middle_pos) * bk.sign(
             self.middle_pos + self.middle_seg_width - inputs)
         right_out = inputs - self.right_pos
 
@@ -62,7 +66,7 @@ class SegRightAngleLayer(Layer):
             output = bk.concatenate([left_out, middle_out, right_out])
         else:
             output = bk.concatenate([left_out, right_out])
-        return self.seg_func(output)
+        return seg_func(output)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)

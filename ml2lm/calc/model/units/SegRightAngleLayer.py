@@ -1,11 +1,13 @@
-from keras import backend as K
+from keras import backend as bk
 from keras.engine.topology import Layer, InputSpec
 from keras.initializers import Constant, RandomUniform
 from keras.layers import Dense
 
+from ml2lm.calc.model.units.activations import seu
+
 
 class SegRightAngleLayer(Layer):
-    def __init__(self, seg_num, input_val_range=(0, 1), relu_alpha=0.1, **kwargs):
+    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -20,7 +22,7 @@ class SegRightAngleLayer(Layer):
         self.middle_seg_width = None
 
         self.input_val_range = input_val_range
-        self.relu_alpha = relu_alpha
+        self.seg_func = seg_func
 
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
@@ -52,15 +54,15 @@ class SegRightAngleLayer(Layer):
 
     def call(self, inputs, **kwargs):
         left_out = self.left_pos - inputs
-        middle_out = None if self.middle_pos is None else K.relu(inputs - self.middle_pos, self.relu_alpha) * K.sign(
+        middle_out = None if self.middle_pos is None else self.seg_func(inputs - self.middle_pos) * bk.sign(
             self.middle_pos + self.middle_seg_width - inputs)
         right_out = inputs - self.right_pos
 
         if self.middle_pos is not None:
-            output = K.concatenate([left_out, middle_out, right_out])
+            output = bk.concatenate([left_out, middle_out, right_out])
         else:
-            output = K.concatenate([left_out, right_out])
-        return K.relu(output, self.relu_alpha)
+            output = bk.concatenate([left_out, right_out])
+        return self.seg_func(output)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)
@@ -73,7 +75,7 @@ class SegRightAngleLayer(Layer):
         config = {
             'seg_num': self.seg_num,
             'input_val_range': self.input_val_range,
-            'relu_alpha': self.relu_alpha
+            'seg_func': self.seg_func
         }
         base_config = super(SegRightAngleLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

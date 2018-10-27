@@ -8,6 +8,7 @@ from keras.layers import Embedding, Flatten, Dense, BatchNormalization, Activati
 
 from ml2lm.calc.model.units.SegRightAngleLayer import SegRightAngleLayer
 from ml2lm.calc.model.units.SegTriangleLayer import SegTriangleLayer
+from ml2lm.calc.model.units.activations import seu
 
 
 def init_tensorflow():
@@ -66,7 +67,7 @@ def to_tnn_data(x, oh_indices=None, cat_indices=None, seg_indices=None, num_indi
     return nn_data
 
 
-def add_dense(x, units, bn=True, activation='relu', dropout=0.2):
+def add_dense(x, units, bn=True, activation=seu, dropout=0.2):
     x = Dense(units)(x)
     if bn:
         x = BatchNormalization()(x)
@@ -90,13 +91,15 @@ def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
     return embeds
 
 
-def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_input_val_range=(0, 1)):
+def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1)):
     segments = []
     for i, out_dim in enumerate(seg_out_dims):
         segment = Lambda(lambda segs: segs[:, i, None])(seg_input)
         if not seg_type:
-            segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range)(segment)
+            segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
+                                       seg_func=seg_func)(segment)
         else:
-            segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range)(segment)
+            segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
+                                         seg_func=seg_func)(segment)
         segments.append(segment)
     return segments

@@ -2,25 +2,15 @@ from keras import backend as K, initializers, regularizers, constraints, activat
 from keras.engine.topology import Layer, InputSpec
 from keras.layers import Dense
 
+from ml2lm.calc.model.units.activations import seu
+
 
 class SegAbsWindowLayer(Layer):
-    def __init__(self, seg_num,
-                 activation=None,
-                 use_bias=True,
-                 kernel_initializer='glorot_uniform',
-                 bias_initializer='glorot_uniform',
-                 seg_width_initializer='ones',
-                 seg_height_initializer='ones',
-                 kernel_regularizer=None,
-                 bias_regularizer=None,
-                 activity_regularizer=None,
-                 seg_width_regularizer=None,
-                 seg_height_regularizer=None,
-                 kernel_constraint=None,
-                 bias_constraint=None,
-                 seg_width_constraint=None,
-                 seg_height_constraint=None,
-                 **kwargs):
+    def __init__(self, seg_num, seg_func=seu, activation=None, use_bias=True, kernel_initializer='glorot_uniform',
+                 bias_initializer='glorot_uniform', seg_width_initializer='ones', seg_height_initializer='ones',
+                 kernel_regularizer=None, bias_regularizer=None, activity_regularizer=None, seg_width_regularizer=None,
+                 seg_height_regularizer=None, kernel_constraint=None, bias_constraint=None, seg_width_constraint=None,
+                 seg_height_constraint=None, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -28,6 +18,7 @@ class SegAbsWindowLayer(Layer):
 
         super(SegAbsWindowLayer, self).__init__(**kwargs)
         self.seg_num = seg_num
+        self.seg_func = seg_func
         self.activation = activations.get(activation)
         self.use_bias = use_bias
         self.kernel_initializer = initializers.get(kernel_initializer)
@@ -151,7 +142,7 @@ class SegAbsWindowLayer(Layer):
             output = K.concatenate([left_out, middle_out, right_out])
         else:
             output = K.concatenate([left_out, right_out])
-        return K.relu(output)
+        return self.seg_func(output)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)
@@ -163,6 +154,7 @@ class SegAbsWindowLayer(Layer):
     def get_config(self):
         config = {
             'seg_num': self.seg_num,
+            'seg_func': self.seg_func,
             'activation': activations.serialize(self.activation),
             'use_bias': self.use_bias,
             'kernel_initializer': initializers.serialize(self.kernel_initializer),

@@ -1,5 +1,3 @@
-import inspect
-
 from keras import backend as bk, initializers, regularizers, constraints, activations
 from keras.engine.topology import Layer, InputSpec
 from keras.layers import Dense
@@ -144,7 +142,7 @@ class SegSquareWindowLayer(Layer):
             output = bk.concatenate([left_out, middle_out, right_out])
         else:
             output = bk.concatenate([left_out, right_out])
-        return self.seg_func()(output) if inspect.isclass(self.seg_func) else self.seg_func(output)
+        return self.seg_func(output)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)

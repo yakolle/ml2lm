@@ -1,4 +1,3 @@
-import inspect
 import os
 import random
 
@@ -72,7 +71,7 @@ def add_dense(x, units, bn=True, activation=seu, dropout=0.2):
     x = Dense(units)(x)
     if bn:
         x = BatchNormalization()(x)
-    x = activation()(x) if inspect.isclass(activation) else Activation(activation)(x)
+    x = Activation(activation)(x)
     x = Dropout(dropout)(x)
     return x
 

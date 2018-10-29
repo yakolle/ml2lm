@@ -75,3 +75,14 @@ class PLSEU(Layer):
 
     def compute_output_shape(self, input_shape):
         return input_shape
+
+
+def make_plseu(alpha):
+    def _plseu(x):
+        return PLSEU(alpha_initializer=Constant(alpha))(x)
+
+    return _plseu
+
+
+def plseu(x):
+    return make_plseu(3.0)(x)

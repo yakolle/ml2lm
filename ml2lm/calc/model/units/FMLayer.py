@@ -1,19 +1,11 @@
-from keras import backend as K, initializers, regularizers, constraints, activations
+from keras import backend as bk, initializers, regularizers, constraints, activations
 from keras.engine.topology import Layer, InputSpec
 
 
 class FMLayer(Layer):
-    def __init__(self, factor_rank,
-                 activation='softsign',
-                 use_bias=False,
-                 kernel_initializer='glorot_uniform',
-                 bias_initializer='zeros',
-                 kernel_regularizer=None,
-                 bias_regularizer=None,
-                 activity_regularizer=None,
-                 kernel_constraint=None,
-                 bias_constraint=None,
-                 **kwargs):
+    def __init__(self, factor_rank, activation='softsign', use_bias=False, kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros', kernel_regularizer=None, bias_regularizer=None, activity_regularizer=None,
+                 kernel_constraint=None, bias_constraint=None, **kwargs):
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
             kwargs['input_shape'] = (kwargs.pop('input_dim'),)
         super(FMLayer, self).__init__(**kwargs)
@@ -53,9 +45,9 @@ class FMLayer(Layer):
         self.built = True
 
     def call(self, inputs, **kwargs):
-        output = (K.square(K.dot(inputs, self.kernel)) - K.dot(K.square(inputs), K.square(self.kernel))) / 2
+        output = (bk.square(bk.dot(inputs, self.kernel)) - bk.dot(bk.square(inputs), bk.square(self.kernel))) / 2
         if self.use_bias:
-            output = K.bias_add(output, self.bias)
+            output = bk.bias_add(output, self.bias)
         if self.activation is not None:
             output = self.activation(output)
         return output

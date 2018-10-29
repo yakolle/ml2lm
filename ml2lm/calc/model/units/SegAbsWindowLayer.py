@@ -1,6 +1,4 @@
-import inspect
-
-from keras import backend as K, initializers, regularizers, constraints, activations
+from keras import backend as bk, initializers, regularizers, constraints, activations
 from keras.engine.topology import Layer, InputSpec
 from keras.layers import Dense
 
@@ -118,17 +116,17 @@ class SegAbsWindowLayer(Layer):
         self.built = True
 
     def call(self, inputs, **kwargs):
-        left_out = K.dot(inputs, self.left_kernel)
+        left_out = bk.dot(inputs, self.left_kernel)
         middle_out = None
         if self.middle_kernel is not None:
-            middle_out = K.dot(inputs, self.middle_kernel)
-        right_out = K.dot(inputs, self.right_kernel)
+            middle_out = bk.dot(inputs, self.middle_kernel)
+        right_out = bk.dot(inputs, self.right_kernel)
 
         if self.use_bias:
-            left_out = K.bias_add(left_out, self.left_bias)
+            left_out = bk.bias_add(left_out, self.left_bias)
             if self.middle_bias is not None:
-                middle_out = K.bias_add(middle_out, self.middle_bias)
-            right_out = K.bias_add(right_out, self.right_bias)
+                middle_out = bk.bias_add(middle_out, self.middle_bias)
+            right_out = bk.bias_add(right_out, self.right_bias)
 
         if self.activation is not None:
             left_out = self.activation(left_out)
@@ -138,13 +136,13 @@ class SegAbsWindowLayer(Layer):
 
         left_out = -left_out
         if self.middle_kernel is not None:
-            middle_out = -K.abs(middle_out) * self.middle_seg_width + self.middle_seg_height
+            middle_out = -bk.abs(middle_out) * self.middle_seg_width + self.middle_seg_height
 
         if self.middle_kernel is not None:
-            output = K.concatenate([left_out, middle_out, right_out])
+            output = bk.concatenate([left_out, middle_out, right_out])
         else:
-            output = K.concatenate([left_out, right_out])
-        return self.seg_func()(output) if inspect.isclass(self.seg_func) else self.seg_func(output)
+            output = bk.concatenate([left_out, right_out])
+        return self.seg_func(output)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)

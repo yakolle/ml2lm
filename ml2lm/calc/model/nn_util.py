@@ -35,14 +35,14 @@ def get_out_dim(vocab_size, scale=10, shrink_factor=0.5, max_out_dim=None):
         out_dim = max(10, int(shrink_factor * vocab_size // 2))
     else:
         out_dim = max(10, int(shrink_factor * 20), int(shrink_factor * vocab_size / np.log2(vocab_size / scale)))
-    out_dim = out_dim if max_out_dim is None else max_out_dim
+    out_dim = max_out_dim if max_out_dim is not None and out_dim > max_out_dim  else out_dim
     return out_dim
 
 
 def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
     seg_dim = max(2, int(np.sqrt(val_cnt * shrink_factor)))
 
-    seg_dim = seg_dim if max_seg_dim is None else max_seg_dim
+    seg_dim = max_seg_dim if max_seg_dim is not None and seg_dim > max_seg_dim  else seg_dim
     return seg_dim
 
 

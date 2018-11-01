@@ -21,11 +21,12 @@ def simple_train(tnn_model, tx, ty, vx=None, vy=None, epochs=300, batch_size=102
     return read_weights(tnn_model, os.path.join(model_save_dir, model_id))
 
 
-def get_rtnn_models(x, num_round=8, get_output=get_simple_linear_output, compile_func=compile_default_mse_output,
-                    cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0,
-                    seg_x_val_range=(0, 1), use_fm=False, seg_flag=True, add_seg_src=True, seg_num_flag=True,
-                    get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.2, fm_dim=320, fm_dropout=0.2,
-                    fm_activation=None, hidden_units=320, hidden_activation=seu, hidden_dropout=0.2):
+def get_rtnn_models(x, num_round=8, res_shrinkage=0.1, get_output=get_simple_linear_output,
+                    compile_func=compile_default_mse_output, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None,
+                    num_segs=None, seg_type=0, seg_x_val_range=(0, 1), use_fm=False, seg_flag=True, add_seg_src=True,
+                    seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.2,
+                    fm_dim=320, fm_dropout=0.2, fm_activation=None, hidden_units=320, hidden_activation=seu,
+                    hidden_dropout=0.2):
     oh_input = Input(shape=[x['ohs'].shape[1]], name='ohs') if 'ohs' in x else None
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
@@ -41,43 +42,75 @@ def get_rtnn_models(x, num_round=8, get_output=get_simple_linear_output, compile
                             embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim,
                             fm_dropout=fm_dropout, fm_activation=fm_activation, hidden_units=hidden_units,
                             hidden_activation=hidden_activation, hidden_dropout=hidden_dropout)
-        tnn = compile_func(tnn, oh_input=oh_input, cat_input=cat_input, seg_input=seg_input, num_input=num_input)
+        other_inputs = None
+        if i:
+            lp_input = Input(shape=[1], name='lp')
+            tnn = Add(name=f'output{i}')([tnn, Lambda(lambda ele: res_shrinkage * ele, name=f'shlp{i}')(lp_input)])
+            other_inputs = [lp_input]
+
+        tnn = compile_func(tnn, oh_input=oh_input, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
+                           other_inputs=other_inputs)
         rtnns.append(tnn)
     return rtnns
 
 
-def train(tx, ty, tnn_models, train_func=simple_train, vx=None, vy=None, res_shrinkage=0.1, predict_batch_size=50000,
+def train(tx, ty, tnn_models, train_func=simple_train, vx=None, vy=None, res_shrinkage=0.1, predict_batch_size=10000,
           **train_params):
     rtnns = []
+    last_tp, last_vp = None, None
     for tnn_model in tnn_models:
+        if last_tp is not None:
+            tx['lp'] = last_tp
+        if last_vp is not None:
+            vx['lp'] = last_vp
         rtnn = train_func(tnn_model, tx, ty, vx, vy, **train_params)
         rtnns.append(rtnn)
 
         tp = np.squeeze(rtnn.predict(tx, batch_size=predict_batch_size))
-        vp = np.squeeze(rtnn.predict(vx, batch_size=predict_batch_size))
-        ty -= res_shrinkage * tp
-        vy -= res_shrinkage * vp
+        vp = np.squeeze(rtnn.predict(vx, batch_size=predict_batch_size)) if vx is not None else None
+        last_tp = tp + (1 - res_shrinkage) * last_tp if last_tp is not None else tp
+        if vp is not None:
+            last_vp = vp + (1 - res_shrinkage) * last_vp if last_vp is not None else vp
+
+    if 'lp' in tx:
+        del tx['lp']
+    if 'lp' in vx:
+        del vx['lp']
     return rtnns
 
 
-def predict(x, rtnns, res_shrinkage, predict_batch_size=50000):
-    p = None
+def predict(x, rtnns, res_shrinkage, predict_batch_size=10000):
+    last_p, p = None, None
     if rtnns:
-        p = np.squeeze(rtnns[-1].predict(x, batch_size=predict_batch_size))
-        for rtnn in rtnns[:-1]:
-            pp = np.squeeze(rtnn.predict(x, batch_size=predict_batch_size))
-            p += res_shrinkage * pp
+        for rtnn in rtnns:
+            if last_p is not None:
+                x['lp'] = last_p
+            p = np.squeeze(rtnn.predict(x, batch_size=predict_batch_size))
+            last_p = p + (1 - res_shrinkage) * last_p if last_p is not None else p
+
+    if 'lp' in x:
+        del x['lp']
     return p
 
 
 def merge(tnn_models, res_shrinkage):
-    outputs = []
-    for tnn in tnn_models[:-1]:
-        outputs.append(Lambda(lambda x: res_shrinkage * x)(tnn.output))
-    outputs.append(tnn_models[-1].output)
-    output = Add()(outputs)
+    rt0nn = tnn_models[0]
+    inputs = rt0nn.inputs
+    rtnn_parts = [rt0nn]
+    for i in range(1, len(tnn_models)):
+        rtnn = tnn_models[i]
+        out_layer = rtnn.layers[-3]
+        for j in range(4):
+            rtnn.layers.pop()
+        rtnn.layers.append(out_layer)
+        rtnn.inputs = inputs
+        rtnn_parts.append(rtnn)
 
-    tnn = tnn_models[-1]
-    rtsnn = Model(tnn.inputs, output)
-    rtsnn.compile(loss=tnn.loss, optimizer=tnn.optimizer, metrics=tnn.metrics)
+    outputs = []
+    for rtnn in rtnn_parts[:-1]:
+        outputs.append(Lambda(lambda x: res_shrinkage * x)(rtnn.layers[-1].output))
+    outputs.append(rtnn_parts[-1].layers[-1].output)
+    output = Add()(outputs)
+    rtsnn = Model(inputs, output)
+    rtsnn.compile(loss=rt0nn.loss, optimizer=rt0nn.optimizer, metrics=rt0nn.metrics)
     return rtsnn

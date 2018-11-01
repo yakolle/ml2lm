@@ -12,7 +12,7 @@ def get_simple_linear_output(flat, name=None, unit_activation=seu):
 
 
 def compile_default_mse_output(outputs, oh_input=None, cat_input=None, seg_input=None, num_input=None,
-                               loss_weights=None):
+                               other_inputs=None, loss_weights=None):
     inputs = [oh_input] if oh_input is not None else []
     if cat_input is not None:
         inputs.append(cat_input)
@@ -20,6 +20,8 @@ def compile_default_mse_output(outputs, oh_input=None, cat_input=None, seg_input
         inputs.append(seg_input)
     if num_input is not None:
         inputs.append(num_input)
+    if other_inputs:
+        inputs.extend(other_inputs)
 
     dnn = Model(inputs, outputs)
     dnn.compile(loss='mse', optimizer=Adam(lr=1e-3), loss_weights=loss_weights)
@@ -31,8 +33,8 @@ def get_simple_sigmoid_output(flat, name=None, unit_activation=seu):
     return Dense(1, activation='sigmoid', name=name)(flat)
 
 
-def compile_default_bce_output(output, oh_input=None, cat_input=None, seg_input=None, num_input=None,
-                               loss_weights=None):
+def compile_default_bce_output(outputs, oh_input=None, cat_input=None, seg_input=None, num_input=None,
+                               other_inputs=None, loss_weights=None):
     inputs = [oh_input] if oh_input is not None else []
     if cat_input is not None:
         inputs.append(cat_input)
@@ -40,8 +42,10 @@ def compile_default_bce_output(output, oh_input=None, cat_input=None, seg_input=
         inputs.append(seg_input)
     if num_input is not None:
         inputs.append(num_input)
+    if other_inputs:
+        inputs.extend(other_inputs)
 
-    dnn = Model(inputs, output)
+    dnn = Model(inputs, outputs)
     dnn.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-3), loss_weights=loss_weights)
     return dnn
 

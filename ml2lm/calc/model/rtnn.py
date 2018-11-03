@@ -1,5 +1,7 @@
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
-from keras.layers import Add
+from keras.engine import InputLayer
+from keras.initializers import Constant
+from keras.layers import Add, Multiply
 
 from ml2lm.calc.model.tnn import *
 from ml2lm.calc.model.units.CVAccelerator import CVAccelerator
@@ -45,7 +47,7 @@ def get_rtnn_models(x, num_round=8, res_shrinkage=0.1, get_output=get_simple_lin
         other_inputs = None
         if i:
             lp_input = Input(shape=[1], name='lp')
-            tnn = Add(name=f'output{i}')([tnn, Lambda(lambda ele: res_shrinkage * ele, name=f'shlp{i}')(lp_input)])
+            tnn = Add()([tnn, Lambda(lambda ele: res_shrinkage * ele)(lp_input)])
             other_inputs = [lp_input]
 
         tnn = compile_func(tnn, oh_input=oh_input, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
@@ -93,7 +95,12 @@ def predict(x, rtnns, res_shrinkage, predict_batch_size=10000):
     return p
 
 
-def merge(tnn_models, res_shrinkage):
+def merge(tnn_models, res_shrinkage, rs_parameterized=True, rs_learnable=False):
+    for i, rtnn in enumerate(tnn_models):
+        for layer in rtnn.layers:
+            if not isinstance(layer, InputLayer):
+                layer.name = f'block{i}_{layer.name}'
+
     rt0nn = tnn_models[0]
     inputs = rt0nn.inputs
     rtnn_parts = [rt0nn]
@@ -107,10 +114,47 @@ def merge(tnn_models, res_shrinkage):
         rtnn_parts.append(rtnn)
 
     outputs = []
-    for rtnn in rtnn_parts[:-1]:
-        outputs.append(Lambda(lambda x: res_shrinkage * x)(rtnn.layers[-1].output))
+    if rs_parameterized or rs_learnable:
+        for i, rtnn in enumerate(rtnn_parts[:-1]):
+            rtnn = rtnn.layers[-1].output
+            out_dim = bk.int_shape(rtnn)[-1]
+            res_factor = Lambda(lambda ele: bk.ones_like(ele) / out_dim)(rtnn)
+            res_factor = Dense(out_dim, use_bias=False, kernel_initializer=Constant(res_shrinkage),
+                               trainable=rs_learnable, name=f'block{i}_rs')(res_factor)
+            outputs.append(Multiply()([rtnn, res_factor]))
+    else:
+        for rtnn in rtnn_parts[:-1]:
+            outputs.append(Lambda(lambda x: res_shrinkage * x)(rtnn.layers[-1].output))
     outputs.append(rtnn_parts[-1].layers[-1].output)
     output = Add()(outputs)
     rtsnn = Model(inputs, output)
     rtsnn.compile(loss=rt0nn.loss, optimizer=rt0nn.optimizer, metrics=rt0nn.metrics)
     return rtsnn
+
+
+def freeze_block(rtsnn, block_no, include_rs=True):
+    set_block_learnable_state(rtsnn, block_no, False, include_rs)
+
+
+def unfreeze_block(rtsnn, block_no, include_rs=True):
+    set_block_learnable_state(rtsnn, block_no, True, include_rs)
+
+
+def set_block_learnable_state(rtsnn, block_no, learnable, include_rs=True):
+    for layer in rtsnn.layers:
+        if layer.name.startswith(f'block{block_no}_') and (f'block{block_no}_rs' != layer.name or include_rs):
+            layer.trainable = learnable
+    rtsnn.compile(loss=rtsnn.loss, optimizer=rtsnn.optimizer, metrics=rtsnn.metrics)
+
+
+def freeze_block_rs(rtsnn, block_no):
+    set_block_rs_learnable_state(rtsnn, block_no, False)
+
+
+def unfreeze_block_rs(rtsnn, block_no):
+    set_block_rs_learnable_state(rtsnn, block_no, True)
+
+
+def set_block_rs_learnable_state(rtsnn, block_no, learnable):
+    rtsnn.get_layer(f'block{block_no}_rs').trainable = learnable
+    rtsnn.compile(loss=rtsnn.loss, optimizer=rtsnn.optimizer, metrics=rtsnn.metrics)

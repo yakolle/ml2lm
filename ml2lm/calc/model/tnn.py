@@ -1,5 +1,5 @@
 from keras import Input, Model
-from keras.layers import concatenate
+from keras.layers import concatenate, Multiply
 from keras.optimizers import Adam
 
 from ml2lm.calc.model.nn_util import *
@@ -48,6 +48,73 @@ def compile_default_bce_output(outputs, oh_input=None, cat_input=None, seg_input
     dnn = Model(inputs, outputs)
     dnn.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-3), loss_weights=loss_weights)
     return dnn
+
+
+def get_seish_tnn_block(block_no, get_output=get_simple_linear_output, oh_input=None, cat_input=None, seg_input=None,
+                        num_input=None, pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None,
+                        num_segs=None, seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50,
+                        shrink_factor=1.0, use_fm=False, seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None,
+                        get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.2, fm_dim=320,
+                        fm_dropout=0.2, fm_activation=None, hidden_units=320, hidden_activation=seu,
+                        hidden_dropout=0.2):
+    embeds = [Flatten()(Embedding(3, 2)(oh_input))] if oh_input is not None else []
+    if cat_input is not None:
+        embeds += get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=shrink_factor ** block_no)
+    embeds = Dropout(embed_dropout)(concatenate(embeds)) if embeds else None
+
+    splitters = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func,
+                             seg_x_val_range) if seg_flag and seg_input is not None else[]
+    splitters += get_segments(num_input, num_segs, shrink_factor ** block_no, seg_type, seg_func,
+                              seg_x_val_range) if seg_num_flag and num_input is not None else []
+
+    if pre_output is not None:
+        seg_y_dim = shrink(seg_y_dim, shrink_factor ** block_no)
+        if not seg_type:
+            segment = SegTriangleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+        else:
+            segment = SegRightAngleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+        splitters.append(segment)
+    splitters = Dropout(seg_dropout)(concatenate(splitters)) if splitters else None
+
+    estimator_inputs = []
+    if embeds is not None:
+        estimator_inputs.append(embeds)
+    if seg_input is not None:
+        estimator_inputs.append(seg_input)
+    if num_input is not None:
+        estimator_inputs.append(num_input)
+    if pre_output is not None:
+        estimator_inputs.append(pre_output)
+
+    estimator_inputs = concatenate(estimator_inputs)
+    estimators = Dense(bk.int_shape(splitters)[-1])(estimator_inputs) if splitters is not None else None
+    segments = Multiply()([splitters, estimators]) if splitters is not None else None
+
+    feats = [embeds] if embeds is not None else []
+    if segments is not None:
+        feats.append(segments)
+    if seg_input is not None and (add_seg_src or not seg_flag):
+        feats.append(seg_input)
+    if num_input is not None:
+        feats.append(num_input)
+    if pre_output is not None:
+        feats.append(pre_output)
+    feats = concatenate(feats) if len(feats) > 1 else feats[0]
+
+    extra_feats = get_extra_layers(x, feats) if get_extra_layers is not None else None
+
+    if use_fm:
+        fm = FMLayer(fm_dim, activation=fm_activation)(feats)
+        fm = Dropout(fm_dropout)(fm)
+        flat = concatenate([feats, fm])
+    else:
+        flat = feats
+
+    flat = concatenate([flat, extra_feats]) if extra_feats is not None else flat
+
+    flat = add_dense(flat, hidden_units, bn=True, activation=hidden_activation, dropout=hidden_dropout)
+    tnn_block = get_output(flat, name=f'out{block_no}', unit_activation=hidden_activation)
+    return tnn_block
 
 
 def get_tnn_block(block_no, get_output=get_simple_linear_output, oh_input=None, cat_input=None, seg_input=None,

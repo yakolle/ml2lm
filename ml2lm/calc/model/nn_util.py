@@ -46,11 +46,16 @@ def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
     return seg_dim
 
 
-def get_seg_num_by_value(x, precision=4, shrink_factor=0.5):
+def calc_val_cnt(x, precision=4):
     val_mean = np.mean(np.abs(x))
     cur_precision = np.round(np.log10(val_mean))
     x = (x * 10 ** (precision - cur_precision)).astype(np.int64)
     val_cnt = len(np.unique(x))
+    return val_cnt
+
+
+def get_seg_num_by_value(x, precision=4, shrink_factor=0.5):
+    val_cnt = calc_val_cnt(x, precision)
     return get_seg_num(val_cnt, shrink_factor=shrink_factor)
 
 

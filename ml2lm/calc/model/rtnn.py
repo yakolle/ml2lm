@@ -1,7 +1,7 @@
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 from keras.engine import InputLayer
 from keras.initializers import Constant
-from keras.layers import Add, Multiply
+from keras.layers import Add
 
 from ml2lm.calc.model.tnn import *
 from ml2lm.calc.model.units.CVAccelerator import CVAccelerator
@@ -29,29 +29,28 @@ def get_rtnn_models(x, num_round=8, res_shrinkage=0.1, get_output=get_simple_lin
                     seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.2,
                     fm_dim=320, fm_dropout=0.2, fm_activation=None, hidden_units=320, hidden_activation=seu,
                     hidden_dropout=0.2):
-    oh_input = Input(shape=[x['ohs'].shape[1]], name='ohs') if 'ohs' in x else None
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
+    extra_inputs = []
 
     rtnns = []
     for i in range(num_round):
-        tnn = get_tnn_block(i, get_output=get_output, oh_input=oh_input, cat_input=cat_input, seg_input=seg_input,
-                            num_input=num_input, cat_in_dims=cat_in_dims, cat_out_dims=cat_out_dims,
-                            seg_out_dims=seg_out_dims, num_segs=num_segs, seg_type=seg_type,
-                            seg_x_val_range=seg_x_val_range, use_fm=use_fm, seg_flag=seg_flag, add_seg_src=add_seg_src,
-                            seg_num_flag=seg_num_flag, x=x, get_extra_layers=get_extra_layers,
-                            embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim,
-                            fm_dropout=fm_dropout, fm_activation=fm_activation, hidden_units=hidden_units,
-                            hidden_activation=hidden_activation, hidden_dropout=hidden_dropout)
-        other_inputs = None
+        tnn, extra_inputs = get_tnn_block(
+            i, get_output=get_output, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
+            cat_in_dims=cat_in_dims, cat_out_dims=cat_out_dims, seg_out_dims=seg_out_dims, num_segs=num_segs,
+            seg_type=seg_type, seg_x_val_range=seg_x_val_range, use_fm=use_fm, seg_flag=seg_flag,
+            add_seg_src=add_seg_src, seg_num_flag=seg_num_flag, x=x, extra_inputs=extra_inputs,
+            get_extra_layers=get_extra_layers, embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout,
+            fm_dim=fm_dim, fm_dropout=fm_dropout, fm_activation=fm_activation, hidden_units=hidden_units,
+            hidden_activation=hidden_activation, hidden_dropout=hidden_dropout)
         if i:
             lp_input = Input(shape=[1], name='lp')
             tnn = Add()([tnn, Lambda(lambda ele: res_shrinkage * ele)(lp_input)])
-            other_inputs = [lp_input]
+            extra_inputs.append(lp_input)
 
-        tnn = compile_func(tnn, oh_input=oh_input, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
-                           other_inputs=other_inputs)
+        tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
+                           other_inputs=extra_inputs)
         rtnns.append(tnn)
     return rtnns
 

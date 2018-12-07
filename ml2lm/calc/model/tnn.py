@@ -94,19 +94,18 @@ def get_seish_tnn_block(block_no, get_output=get_simple_linear_output, cat_input
         feats.append(num_input)
     if pre_output is not None:
         feats.append(pre_output)
-    feats = concatenate(feats) if len(feats) > 1 else feats[0]
+    feats = concatenate(feats) if len(feats) > 1 else feats[0] if feats else None
 
     extra_feats, extra_inputs = get_extra_layers(x, feats, extra_inputs) if get_extra_layers is not None else (
         None, extra_inputs)
 
-    if use_fm:
+    if use_fm and feats is not None:
         fm = FMLayer(fm_dim, activation=fm_activation)(feats)
         fm = Dropout(fm_dropout)(fm)
-        flat = concatenate([feats, fm])
-    else:
-        flat = feats
+        feats = concatenate([feats, fm])
 
-    flat = concatenate([flat, extra_feats]) if extra_feats is not None else flat
+    flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
+        feats if feats is not None else extra_feats
 
     flat = add_dense(flat, hidden_units, bn=True, activation=hidden_activation, dropout=hidden_dropout)
     tnn_block = get_output(flat, name=f'out{block_no}', unit_activation=hidden_activation)
@@ -146,19 +145,18 @@ def get_tnn_block(block_no, get_output=get_simple_linear_output, cat_input=None,
         feats.append(num_input)
     if pre_output is not None:
         feats.append(pre_output)
-    feats = concatenate(feats) if len(feats) > 1 else feats[0]
+    feats = concatenate(feats) if len(feats) > 1 else feats[0] if feats else None
 
     extra_feats, extra_inputs = get_extra_layers(x, feats, extra_inputs) if get_extra_layers is not None else (
         None, extra_inputs)
 
-    if use_fm:
+    if use_fm and feats is not None:
         fm = FMLayer(fm_dim, activation=fm_activation)(feats)
         fm = Dropout(fm_dropout)(fm)
-        flat = concatenate([feats, fm])
-    else:
-        flat = feats
+        feats = concatenate([feats, fm])
 
-    flat = concatenate([flat, extra_feats]) if extra_feats is not None else flat
+    flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
+        feats if feats is not None else extra_feats
 
     flat = add_dense(flat, hidden_units, bn=True, activation=hidden_activation, dropout=hidden_dropout)
     tnn_block = get_output(flat, name=f'out{block_no}', unit_activation=hidden_activation)

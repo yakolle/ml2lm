@@ -6,8 +6,7 @@ from ml2lm.calc.model.nn_util import *
 from ml2lm.calc.model.units.FMLayer import FMLayer
 
 
-def get_simple_linear_output(flat, name=None, unit_activation=seu):
-    flat = add_dense(flat, 64, bn=False, activation=unit_activation, dropout=0.05)
+def get_linear_output(flat, name=None):
     return Dense(1, name=name)(flat)
 
 
@@ -26,9 +25,19 @@ def compile_default_mse_output(outputs, cat_input=None, seg_input=None, num_inpu
     return dnn
 
 
-def get_simple_sigmoid_output(flat, name=None, unit_activation=seu):
-    flat = add_dense(flat, 64, bn=False, activation=unit_activation, dropout=0.05)
+def get_sigmoid_output(flat, name=None):
     return Dense(1, activation='sigmoid', name=name)(flat)
+
+
+def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_activation=seu,
+                             hidden_dropouts=(0.2, 0.05)):
+    flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
+        feats if feats is not None else extra_feats
+    if hidden_units:
+        for i in range(len(hidden_units) - 1):
+            flat = add_dense(flat, hidden_units[i], activation=hidden_activation, dropout=hidden_dropouts[i])
+        flat = add_dense(flat, hidden_units[-1], bn=False, activation=hidden_activation, dropout=hidden_dropouts[-1])
+    return flat
 
 
 def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
@@ -46,13 +55,13 @@ def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_inpu
     return dnn
 
 
-def get_seish_tnn_block(block_no, get_output=get_simple_linear_output, cat_input=None, seg_input=None, num_input=None,
+def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_input=None, num_input=None,
                         pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None,
                         seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50, shrink_factor=1.0,
                         use_fm=False, seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None,
                         get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.2, fm_dim=320,
-                        fm_dropout=0.2, fm_activation=None, hidden_units=320, hidden_activation=seu,
-                        hidden_dropout=0.2):
+                        fm_dropout=0.2, fm_activation=None, get_last_layers=get_default_dense_layers,
+                        hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.2, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = Dropout(embed_dropout)(concatenate(embeds)) if embeds else None
@@ -104,20 +113,19 @@ def get_seish_tnn_block(block_no, get_output=get_simple_linear_output, cat_input
         fm = Dropout(fm_dropout)(fm)
         feats = concatenate([feats, fm])
 
-    flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
-        feats if feats is not None else extra_feats
-
-    flat = add_dense(flat, hidden_units, bn=True, activation=hidden_activation, dropout=hidden_dropout)
-    tnn_block = get_output(flat, name=f'out{block_no}', unit_activation=hidden_activation)
+    flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
+                           hidden_dropouts=hidden_dropouts)
+    tnn_block = get_output(flat, name=f'out{block_no}')
     return tnn_block, extra_inputs
 
 
-def get_tnn_block(block_no, get_output=get_simple_linear_output, cat_input=None, seg_input=None, num_input=None,
+def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_input=None, num_input=None,
                   pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0,
                   seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50, shrink_factor=1.0, use_fm=False,
                   seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None, get_extra_layers=None,
                   embed_dropout=0.2, seg_func=seu, seg_dropout=0.2, fm_dim=320, fm_dropout=0.2, fm_activation=None,
-                  hidden_units=320, hidden_activation=seu, hidden_dropout=0.2):
+                  get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
+                  hidden_dropouts=(0.2, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = Dropout(embed_dropout)(concatenate(embeds)) if embeds else None
@@ -155,19 +163,18 @@ def get_tnn_block(block_no, get_output=get_simple_linear_output, cat_input=None,
         fm = Dropout(fm_dropout)(fm)
         feats = concatenate([feats, fm])
 
-    flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
-        feats if feats is not None else extra_feats
-
-    flat = add_dense(flat, hidden_units, bn=True, activation=hidden_activation, dropout=hidden_dropout)
-    tnn_block = get_output(flat, name=f'out{block_no}', unit_activation=hidden_activation)
+    flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
+                           hidden_dropouts=hidden_dropouts)
+    tnn_block = get_output(flat, name=f'out{block_no}')
     return tnn_block, extra_inputs
 
 
-def get_tnn_model(x, get_output=get_simple_linear_output, compile_func=compile_default_mse_output, cat_in_dims=None,
+def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_mse_output, cat_in_dims=None,
                   cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0, seg_x_val_range=(0, 1), use_fm=False,
                   seg_flag=True, add_seg_src=True, seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2,
-                  seg_func=seu, seg_dropout=0.2, fm_dim=320, fm_dropout=0.2, fm_activation=None, hidden_units=320,
-                  hidden_activation=seu, hidden_dropout=0.2):
+                  seg_func=seu, seg_dropout=0.2, fm_dim=320, fm_dropout=0.2, fm_activation=None,
+                  get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
+                  hidden_dropouts=(0.2, 0.05)):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -178,6 +185,7 @@ def get_tnn_model(x, get_output=get_simple_linear_output, compile_func=compile_d
         seg_type=seg_type, seg_x_val_range=seg_x_val_range, use_fm=use_fm, seg_flag=seg_flag, add_seg_src=add_seg_src,
         seg_num_flag=seg_num_flag, x=x, get_extra_layers=get_extra_layers, embed_dropout=embed_dropout,
         seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim, fm_dropout=fm_dropout, fm_activation=fm_activation,
-        hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropout=hidden_dropout)
+        get_last_layers=get_last_layers, hidden_units=hidden_units, hidden_activation=hidden_activation,
+        hidden_dropouts=hidden_dropouts)
     tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs)
     return tnn

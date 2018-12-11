@@ -59,10 +59,8 @@ def get_seg_num_by_value(x, precision=4, shrink_factor=0.5):
     return get_seg_num(val_cnt, shrink_factor=shrink_factor)
 
 
-def to_tnn_data(x, oh_indices=None, cat_indices=None, seg_indices=None, num_indices=None):
+def to_tnn_data(x, cat_indices=None, seg_indices=None, num_indices=None):
     nn_data = {}
-    if oh_indices is not None:
-        nn_data['ohs'] = x[:, oh_indices]
     if cat_indices is not None:
         cat_indices['cats'] = x[:, cat_indices]
     if seg_indices is not None:
@@ -76,8 +74,10 @@ def add_dense(x, units, bn=True, activation=seu, dropout=0.2):
     x = Dense(units)(x)
     if bn:
         x = BatchNormalization()(x)
-    x = Activation(activation)(x)
-    x = Dropout(dropout)(x)
+    if activation is not None:
+        x = Activation(activation)(x)
+    if dropout > 0:
+        x = Dropout(dropout)(x)
     return x
 
 

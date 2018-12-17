@@ -34,9 +34,10 @@ def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_
     flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
         feats if feats is not None else extra_feats
     if hidden_units:
-        for i in range(len(hidden_units) - 1):
-            flat = add_dense(flat, hidden_units[i], activation=hidden_activation, dropout=hidden_dropouts[i])
-        flat = add_dense(flat, hidden_units[-1], bn=False, activation=hidden_activation, dropout=hidden_dropouts[-1])
+        hidden_layer_num = len(hidden_units)
+        for i in range(hidden_layer_num):
+            flat = add_dense(flat, hidden_units[i], bn=i < hidden_layer_num - 1 or 1 == hidden_layer_num,
+                             activation=hidden_activation, dropout=hidden_dropouts[i])
     return flat
 
 

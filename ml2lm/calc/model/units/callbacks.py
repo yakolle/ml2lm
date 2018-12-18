@@ -57,15 +57,15 @@ class CheckpointDecorator(ModelCheckpoint):
                     self.model.save(filepath, overwrite=True)
 
 
-class LRSchedulerByLoss(Callback):
+class LRAnnealingByLoss(Callback):
     def __init__(self, loss_lr_pairs, tol=0.0, verbose=0):
-        super(LRSchedulerByLoss, self).__init__()
-        self.loss_lr_pairs = sorted(loss_lr_pairs)
+        super(LRAnnealingByLoss, self).__init__()
+        self.loss_lr_pairs = loss_lr_pairs[::-1]
         self.tol = tol
         self.verbose = verbose
 
     def on_train_begin(self, logs=None):
-        lr = self.loss_lr_pairs[-1][1]
+        lr = self.loss_lr_pairs.pop()[1]
         bk.set_value(self.model.optimizer.lr, lr)
 
     def on_epoch_end(self, epoch, logs=None):
@@ -73,21 +73,11 @@ class LRSchedulerByLoss(Callback):
         if not hasattr(self.model.optimizer, 'lr'):
             raise ValueError('Optimizer must have a "lr" attribute.')
         cur_loss = logs.get('loss')
-        cur_lr = bk.get_value(self.model.optimizer.lr)
-        if cur_loss is not None:
-            lr = cur_lr
-            for loss, _lr in self.loss_lr_pairs:
-                if cur_loss - loss <= self.tol:
-                    lr = _lr
-                    break
-            if lr < cur_lr:
+        if cur_loss is not None and self.loss_lr_pairs:
+            loss, lr = self.loss_lr_pairs[-1]
+            if cur_loss - loss <= self.tol:
                 bk.set_value(self.model.optimizer.lr, lr)
+                self.loss_lr_pairs.pop()
                 if self.verbose > 0:
-                    print('\nEpoch %05d: LRSchedulerByLoss setting learning '
+                    print('\nEpoch %05d: LRAnnealingByLoss setting learning '
                           'rate to %s.' % (epoch + 1, lr))
-        else:
-            lr = self.loss_lr_pairs[-1][1]
-            bk.set_value(self.model.optimizer.lr, lr)
-            if self.verbose > 0:
-                print('\nEpoch %05d: LRSchedulerByLoss setting learning '
-                      'rate to %s.' % (epoch + 1, lr))

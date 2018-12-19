@@ -28,7 +28,7 @@ class CheckpointDecorator(ModelCheckpoint):
             self.epochs_since_last_save = 0
             filepath = self.filepath.format(epoch=epoch + 1, **logs)
             if self.save_best_only:
-                current = self.calc_score_func(logs)
+                current = self.calc_score_func(logs, self.monitor, self.monitor_op)
                 if current is None:
                     warnings.warn('Can save best model only with %s available, '
                                   'skipping.' % self.monitor, RuntimeWarning)

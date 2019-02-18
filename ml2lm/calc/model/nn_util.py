@@ -47,7 +47,7 @@ def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
 
 
 def calc_val_cnt(x, precision=4):
-    val_mean = np.mean(np.abs(x))
+    val_mean = np.mean(np.abs(x[x != 0]))
     cur_precision = np.round(np.log10(val_mean))
     x = (x * 10 ** (precision - cur_precision)).astype(np.int64)
     val_cnt = len(np.unique(x))

@@ -39,8 +39,8 @@ def get_out_dim(vocab_size, scale=10, shrink_factor=0.5, max_out_dim=None):
     return out_dim
 
 
-def get_seg_num(val_cnt, shrink_factor=0.5, max_seg_dim=None):
-    seg_dim = max(2, int(np.sqrt(val_cnt * shrink_factor)))
+def get_seg_num(val_cnt, multi_factor=1.0, max_seg_dim=None):
+    seg_dim = max(2, int(np.sqrt(val_cnt * multi_factor)))
 
     seg_dim = max_seg_dim if max_seg_dim is not None and seg_dim > max_seg_dim else seg_dim
     return seg_dim

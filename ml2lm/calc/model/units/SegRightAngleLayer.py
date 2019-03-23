@@ -1,13 +1,14 @@
+import numpy as np
 from keras import backend as bk
 from keras.engine.topology import Layer, InputSpec
-from keras.initializers import Constant, RandomUniform
+from keras.initializers import Constant
 from keras.layers import Dense
 
 from ml2lm.calc.model.units.activations import seu
 
 
 class SegRightAngleLayer(Layer):
-    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, **kwargs):
+    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, seg_width_fixed=False, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -23,6 +24,8 @@ class SegRightAngleLayer(Layer):
 
         self.input_val_range = input_val_range
         self.seg_func = seg_func
+        self.pos_fixed = pos_fixed
+        self.seg_width_fixed = seg_width_fixed
 
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
@@ -35,17 +38,20 @@ class SegRightAngleLayer(Layer):
         left_pos = self.input_val_range[0] + seg_width
         right_pos = self.input_val_range[1] - seg_width
 
-        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name='left_pos')
+        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name='left_pos',
+                                        trainable=not self.pos_fixed)
         if self.seg_num > 2:
+            middle_pos = np.linspace(left_pos, right_pos - seg_width, self.seg_num - 2)
             self.middle_pos = self.add_weight(shape=(self.seg_num - 2,), name='middle_pos',
-                                              initializer=RandomUniform(minval=left_pos, maxval=right_pos - seg_width))
+                                              initializer=Constant(value=middle_pos), trainable=not self.pos_fixed)
         else:
             self.middle_pos = None
-        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos), name='right_pos')
+        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos), name='right_pos',
+                                         trainable=not self.pos_fixed)
 
         if self.seg_num > 2:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 2,), initializer=Constant(value=seg_width),
-                                                    name='middle_seg_width')
+                                                    name='middle_seg_width', trainable=not self.seg_width_fixed)
         else:
             self.middle_seg_width = None
 
@@ -75,7 +81,9 @@ class SegRightAngleLayer(Layer):
         config = {
             'seg_num': self.seg_num,
             'input_val_range': self.input_val_range,
-            'seg_func': self.seg_func
+            'seg_func': self.seg_func,
+            'pos_fixed': self.pos_fixed,
+            'seg_width_fixed': self.seg_width_fixed
         }
         base_config = super(SegRightAngleLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

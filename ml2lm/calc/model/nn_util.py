@@ -54,9 +54,9 @@ def calc_val_cnt(x, precision=4):
     return val_cnt
 
 
-def get_seg_num_by_value(x, precision=4, shrink_factor=0.5):
+def get_seg_num_by_value(x, precision=4, multi_factor=1.0):
     val_cnt = calc_val_cnt(x, precision)
-    return get_seg_num(val_cnt, shrink_factor=shrink_factor)
+    return get_seg_num(val_cnt, multi_factor=multi_factor)
 
 
 def to_tnn_data(x, cat_indices=None, seg_indices=None, num_indices=None):

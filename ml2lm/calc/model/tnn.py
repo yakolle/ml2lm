@@ -65,9 +65,9 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
                         hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.2, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
-    # embeds = Dropout(embed_dropout)(concatenate(embeds)) if embeds else None
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
-    embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
+    if embed_dropout > 0:
+        embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
 
     splitters = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func,
                              seg_x_val_range) if seg_flag and seg_input is not None else[]
@@ -99,7 +99,8 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
 
     segments = Multiply()([splitters, estimators]) if splitters is not None and estimators is not None else None
     segments = BatchNormalization()(segments) if segments is not None else None
-    segments = Dropout(seg_dropout)(segments) if segments is not None else None
+    if seg_dropout > 0:
+        segments = Dropout(seg_dropout)(segments) if segments is not None else None
 
     feats = [embeds] if embeds is not None else []
     if segments is not None:
@@ -117,7 +118,8 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
 
     if use_fm and feats is not None:
         fm = FMLayer(fm_dim, activation=fm_activation)(feats)
-        fm = Dropout(fm_dropout)(fm)
+        if fm_dropout > 0:
+            fm = Dropout(fm_dropout)(fm)
         feats = concatenate([feats, fm])
 
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
@@ -135,9 +137,9 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
                   hidden_dropouts=(0.2, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
-    # embeds = Dropout(embed_dropout)(concatenate(embeds)) if embeds else None
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
-    embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
+    if embed_dropout > 0:
+        embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
 
     segments = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func,
                             seg_x_val_range) if seg_flag and seg_input is not None else[]
@@ -151,9 +153,9 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
         else:
             segment = SegRightAngleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
         segments.append(segment)
-    # segments = Dropout(seg_dropout)(concatenate(segments)) if segments else None
     segments = BatchNormalization()(concatenate(segments)) if segments else None
-    segments = Dropout(seg_dropout)(segments) if segments is not None else None
+    if seg_dropout > 0:
+        segments = Dropout(seg_dropout)(segments) if segments is not None else None
 
     feats = [embeds] if embeds is not None else []
     if segments is not None:
@@ -171,7 +173,8 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
 
     if use_fm and feats is not None:
         fm = FMLayer(fm_dim, activation=fm_activation)(feats)
-        fm = Dropout(fm_dropout)(fm)
+        if fm_dropout > 0:
+            fm = Dropout(fm_dropout)(fm)
         feats = concatenate([feats, fm])
 
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,

@@ -15,7 +15,7 @@ def lsm(x):
 
 
 class FMLayer(Layer):
-    def __init__(self, factor_rank, dist_func=bk.relu, exclude_self=True, rel_types='d', activation='relu',
+    def __init__(self, factor_rank, dist_func=bk.relu, exclude_self=False, rel_types='d', activation='relu',
                  use_bias=False, kernel_initializer='glorot_uniform', bias_initializer='zeros', kernel_regularizer=None,
                  bias_regularizer=None, activity_regularizer=None, kernel_constraint=None, bias_constraint=None,
                  **kwargs):

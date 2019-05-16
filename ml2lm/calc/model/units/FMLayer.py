@@ -15,7 +15,7 @@ def lsm(x):
 
 
 class FMLayer(Layer):
-    def __init__(self, factor_rank, dist_func=bk.relu, exclude_self=False, rel_types='d', activation='relu',
+    def __init__(self, factor_rank, dist_func=bk.relu, exclude_selves=(False,), rel_types='d', activation='relu',
                  use_bias=False, kernel_initializer='glorot_uniform', bias_initializer='zeros', kernel_regularizer=None,
                  bias_regularizer=None, activity_regularizer=None, kernel_constraint=None, bias_constraint=None,
                  **kwargs):
@@ -27,7 +27,7 @@ class FMLayer(Layer):
         self.factor_rank = factor_rank
 
         self.dist_func = dist_func
-        self.exclude_self = exclude_self
+        self.exclude_selves = exclude_selves
         self.rel_types = rel_types
 
         self.activation = activations.get(activation)
@@ -42,34 +42,31 @@ class FMLayer(Layer):
         self.input_spec = InputSpec(min_ndim=2)
         self.bias = None
 
-        self.val_rel = None
-        self.dist_rel = None
-        self.ent_rel = None
-        self.rel_map = {'v': self.val_rel, 'd': self.dist_rel, 'e': self.ent_rel}
+        self.rel_map = {}
+        self.exclude_self_map = dict(zip(rel_types, self.exclude_selves))
 
     def build(self, input_shape):
         assert len(input_shape) >= 2
         input_dim = input_shape[-1]
 
         if 'v' in self.rel_types:
-            self.val_rel = self.add_weight(shape=(input_dim, self.factor_rank), initializer=self.kernel_initializer,
-                                           name='val_rel', regularizer=self.kernel_regularizer,
-                                           constraint=self.kernel_constraint)
+            self.rel_map['v'] = self.add_weight(shape=(input_dim, self.factor_rank),
+                                                initializer=self.kernel_initializer, name='val_rel',
+                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
         else:
-            self.val_rel = None
+            self.rel_map['v'] = None
         if 'd' in self.rel_types:
-            self.dist_rel = self.add_weight(shape=(input_dim, self.factor_rank), initializer=self.kernel_initializer,
-                                            name='dist_rel', regularizer=self.kernel_regularizer,
-                                            constraint=self.kernel_constraint)
+            self.rel_map['d'] = self.add_weight(shape=(input_dim, self.factor_rank),
+                                                initializer=self.kernel_initializer, name='dist_rel',
+                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
         else:
-            self.dist_rel = None
+            self.rel_map['d'] = None
         if 'e' in self.rel_types:
-            self.ent_rel = self.add_weight(shape=(input_dim, self.factor_rank), initializer=self.kernel_initializer,
-                                           name='ent_rel', regularizer=self.kernel_regularizer,
-                                           constraint=self.kernel_constraint)
+            self.rel_map['e'] = self.add_weight(shape=(input_dim, self.factor_rank),
+                                                initializer=self.kernel_initializer, name='ent_rel',
+                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
         else:
-            self.ent_rel = None
-        self.rel_map.update({'v': self.val_rel, 'd': self.dist_rel, 'e': self.ent_rel})
+            self.rel_map['e'] = None
 
         if self.use_bias:
             self.bias = self.add_weight(shape=(self.factor_rank,), initializer=self.bias_initializer, name='bias',
@@ -79,10 +76,12 @@ class FMLayer(Layer):
         self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
         self.built = True
 
-    def _call(self, rel_type, inputs, kernel):
+    def _call(self, rel_type, inputs):
         rel, self_rel = None, None
 
-        kernel_2 = bk.square(kernel) if self.exclude_self else None
+        kernel = self.rel_map[rel_type]
+        exclude_self = self.exclude_self_map[rel_type]
+        kernel_2 = bk.square(kernel) if exclude_self or 'e' != rel_type else None
         val_dot, dist, dist_dot = None, None, None
         val_rel, dist_rel = None, None
 
@@ -91,27 +90,25 @@ class FMLayer(Layer):
             val_rel = bk.square(val_dot)
             if 'v' == rel_type:
                 rel = val_rel
-                if self.exclude_self:
-                    self_rel = bk.dot(bk.square(inputs), kernel_2)
+                self_rel = bk.dot(bk.square(inputs), kernel_2)
         if rel_type in 'de':
             dist = self.dist_func(inputs)
             dist_dot = bk.dot(dist, kernel)
             dist_rel = bk.square(dist_dot)
             if 'd' == rel_type:
                 rel = dist_rel
-                if self.exclude_self:
-                    self_rel = bk.dot(bk.square(dist), kernel_2)
+                self_rel = bk.dot(bk.square(dist), kernel_2)
         if 'e' == rel_type:
             dist_val_rel = bk.square(val_dot + dist_dot)
             rel = dist_val_rel - val_rel - dist_rel
-            if self.exclude_self:
+            if exclude_self:
                 self_rel = 2 * bk.dot(inputs * dist, kernel_2)
 
-        output = rel - self_rel if self.exclude_self else rel
+        output = rel - self_rel if exclude_self else rel + self_rel if 'e' != rel_type else rel
         return output
 
     def call(self, inputs, **kwargs):
-        outputs = [self._call(rel_type, inputs, self.rel_map[rel_type]) for rel_type in self.rel_types]
+        outputs = [self._call(rel_type, inputs) for rel_type in self.rel_types]
         output = bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
 
         if self.use_bias:
@@ -131,7 +128,7 @@ class FMLayer(Layer):
         config = {
             'factor_rank': self.factor_rank,
             'dist_func': self.dist_func,
-            'exclude_self': self.exclude_self,
+            'exclude_selves': self.exclude_selves,
             'rel_types': self.rel_types,
             'activation': activations.serialize(self.activation),
             'use_bias': self.use_bias,

@@ -28,7 +28,7 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
                     num_segs=None, seg_type=0, seg_x_val_range=(0, 1), use_fm=False, seg_flag=True, add_seg_src=True,
                     seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
                     fm_dim=320, fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu, fm_rel_types='d',
-                    fm_exclude_self=False, get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
+                    fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
                     hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
     if isinstance(res_shrinkage, float):
         res_shrinkage = [res_shrinkage] * (num_round - 1)
@@ -53,7 +53,7 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
             seg_num_flag=seg_num_flag, x=x, extra_inputs=extra_inputs, get_extra_layers=get_extra_layers,
             embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim,
             fm_dropout=fm_dropout, fm_activation=fm_activation, fm_dist_func=fm_dist_func, fm_rel_types=fm_rel_types,
-            fm_exclude_self=fm_exclude_self, get_last_layers=get_last_layers, hidden_units=hidden_units,
+            fm_exclude_selves=fm_exclude_selves, get_last_layers=get_last_layers, hidden_units=hidden_units,
             hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts)
         if i > 0:
             lp_input = Input(shape=[1], name='lp')

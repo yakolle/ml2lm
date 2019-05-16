@@ -6,7 +6,7 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
                    shrink_factor=1.0, seg_y_dim=50, prev_block_weight_files=None, use_fm=False, seg_flag=True,
                    add_seg_src=True, seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu,
                    seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu,
-                   fm_rel_types='d', fm_exclude_self=False, get_last_layers=get_default_dense_layers,
+                   fm_rel_types='d', fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers,
                    hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
@@ -21,7 +21,7 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
               'use_fm': use_fm, 'seg_flag': seg_flag, 'add_seg_src': add_seg_src, 'seg_num_flag': seg_num_flag, 'x': x,
               'get_extra_layers': get_extra_layers, 'embed_dropout': embed_dropout, 'seg_func': seg_func,
               'seg_dropout': seg_dropout, 'fm_dim': fm_dim, 'fm_dropout': fm_dropout, 'fm_activation': fm_activation,
-              'fm_dist_func': fm_dist_func, 'fm_rel_types': fm_rel_types, 'fm_exclude_self': fm_exclude_self,
+              'fm_dist_func': fm_dist_func, 'fm_rel_types': fm_rel_types, 'fm_exclude_selves': fm_exclude_selves,
               'get_last_layers': get_last_layers, 'hidden_units': hidden_units, 'hidden_activation': hidden_activation,
               'hidden_dropouts': hidden_dropouts}
 
@@ -46,7 +46,7 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
                 x, y, get_output, compile_func, cat_in_dims, cat_out_dims, seg_out_dims, num_segs, seg_type,
                 seg_x_val_range, block_num - 1, shrink_factor, seg_y_dim, prev_block_weight_files, use_fm, seg_flag,
                 add_seg_src, seg_num_flag, get_extra_layers, embed_dropout, seg_func, seg_dropout, fm_dim, fm_dropout,
-                fm_activation, fm_dist_func, fm_rel_types, fm_exclude_self, get_last_layers, hidden_units,
+                fm_activation, fm_dist_func, fm_rel_types, fm_exclude_selves, get_last_layers, hidden_units,
                 hidden_activation, hidden_dropouts)
             read_weights(btnn, prev_block_weight_files[block_num - 2])
             for layer in btnn.layers:

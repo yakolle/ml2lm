@@ -1,3 +1,4 @@
+import time
 import warnings
 
 import numpy as np
@@ -81,3 +82,31 @@ class LRAnnealingByLoss(Callback):
                 if self.verbose > 0:
                     print('\nEpoch %05d: LRAnnealingByLoss setting learning '
                           'rate to %s.' % (epoch + 1, lr))
+
+
+class EVPerEpoch(Callback):
+    def __init__(self, oxes, opss, epochs, period=1, pred_batch_size=5000):
+        super(EVPerEpoch, self).__init__()
+        self.oxes = oxes
+        self.opss = opss
+        self.epochs = epochs
+        self.period = period
+        self.pred_batch_size = pred_batch_size
+
+    def on_epoch_end(self, epoch, logs=None):
+        if not (epoch + 1) % self.period or self.model.stop_training or epoch + 1 == self.epochs:
+            for ox, ops in zip(self.oxes, self.opss):
+                op = np.squeeze(self.model.predict(ox, batch_size=self.pred_batch_size))
+                ops.append(op)
+
+
+class TimeMonitor(Callback):
+    def __init__(self, early_stopper, end_time):
+        super(TimeMonitor, self).__init__()
+        self.early_stopper = early_stopper
+        self.end_time = end_time
+
+    def on_epoch_end(self, epoch, logs=None):
+        if time.time() > self.end_time:
+            self.early_stopper.stopped_epoch = epoch + 1
+            self.model.stop_training = True

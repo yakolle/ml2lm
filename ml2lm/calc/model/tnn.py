@@ -62,7 +62,7 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
                         use_fm=False, seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None,
                         get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, fm_dim=320,
                         fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu, fm_rel_types='d',
-                        fm_exclude_self=False, get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
+                        fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
                         hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
@@ -118,7 +118,7 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
         None, extra_inputs)
 
     if use_fm and feats is not None:
-        fm = FMLayer(fm_dim, dist_func=fm_dist_func, exclude_self=fm_exclude_self, rel_types=fm_rel_types,
+        fm = FMLayer(fm_dim, dist_func=fm_dist_func, exclude_selves=fm_exclude_selves, rel_types=fm_rel_types,
                      activation=fm_activation)(feats)
         if fm_dropout > 0:
             fm = Dropout(fm_dropout)(fm)
@@ -135,8 +135,9 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
                   seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50, shrink_factor=1.0, use_fm=False,
                   seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None, get_extra_layers=None,
                   embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu',
-                  fm_dist_func=lrelu, fm_rel_types='d', fm_exclude_self=False, get_last_layers=get_default_dense_layers,
-                  hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
+                  fm_dist_func=lrelu, fm_rel_types='d', fm_exclude_selves=(False,),
+                  get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
+                  hidden_dropouts=(0.3, 0.05)):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
@@ -174,7 +175,7 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
         None, extra_inputs)
 
     if use_fm and feats is not None:
-        fm = FMLayer(fm_dim, dist_func=fm_dist_func, exclude_self=fm_exclude_self, rel_types=fm_rel_types,
+        fm = FMLayer(fm_dim, dist_func=fm_dist_func, exclude_selves=fm_exclude_selves, rel_types=fm_rel_types,
                      activation=fm_activation)(feats)
         if fm_dropout > 0:
             fm = Dropout(fm_dropout)(fm)
@@ -190,7 +191,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0, seg_x_val_range=(0, 1), use_fm=False,
                   seg_flag=True, add_seg_src=True, seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2,
                   seg_func=seu, seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu,
-                  fm_rel_types='d', fm_exclude_self=False, get_last_layers=get_default_dense_layers,
+                  fm_rel_types='d', fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers,
                   hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
@@ -202,7 +203,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
         seg_type=seg_type, seg_x_val_range=seg_x_val_range, use_fm=use_fm, seg_flag=seg_flag, add_seg_src=add_seg_src,
         seg_num_flag=seg_num_flag, x=x, get_extra_layers=get_extra_layers, embed_dropout=embed_dropout,
         seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim, fm_dropout=fm_dropout, fm_activation=fm_activation,
-        fm_dist_func=fm_dist_func, fm_rel_types=fm_rel_types, fm_exclude_self=fm_exclude_self,
+        fm_dist_func=fm_dist_func, fm_rel_types=fm_rel_types, fm_exclude_selves=fm_exclude_selves,
         get_last_layers=get_last_layers, hidden_units=hidden_units, hidden_activation=hidden_activation,
         hidden_dropouts=hidden_dropouts)
     tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs)

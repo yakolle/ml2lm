@@ -96,15 +96,16 @@ def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
     return embeds
 
 
-def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1)):
+def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1),
+                 seg_bin=False, only_bin=False):
     segments = []
     for i, out_dim in enumerate(seg_out_dims):
         segment = Lambda(lambda segs: segs[:, i, None])(seg_input)
         if not seg_type:
             segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                       seg_func=seg_func)(segment)
+                                       seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
         else:
             segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                         seg_func=seg_func)(segment)
+                                         seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
         segments.append(segment)
     return segments

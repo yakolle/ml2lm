@@ -58,29 +58,32 @@ def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_inpu
 
 def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_input=None, num_input=None,
                         pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None,
-                        seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50, shrink_factor=1.0,
+                        seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=100, shrink_factor=1.0,
                         use_fm=False, seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None,
                         get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, fm_dim=320,
                         fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu, fm_rel_types='d',
                         fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
-                        hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
+                        hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False,
+                        pred_seg_bin=False, add_pred=False):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
     if embed_dropout > 0:
         embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
 
-    splitters = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func,
-                             seg_x_val_range) if seg_flag and seg_input is not None else[]
-    splitters += get_segments(num_input, num_segs, shrink_factor ** block_no, seg_type, seg_func,
-                              seg_x_val_range) if seg_num_flag and num_input is not None else []
+    splitters = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
+                             feat_seg_bin, feat_only_bin) if seg_flag and seg_input is not None else[]
+    splitters += get_segments(num_input, num_segs, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
+                              feat_seg_bin, feat_only_bin) if seg_num_flag and num_input is not None else []
 
     if pre_output is not None:
         seg_y_dim = shrink(seg_y_dim, shrink_factor ** block_no)
         if not seg_type:
-            segment = SegTriangleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+            segment = SegTriangleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=feat_seg_bin,
+                                       only_seg_bin=feat_only_bin)(pre_output)
         else:
-            segment = SegRightAngleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+            segment = SegRightAngleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=feat_seg_bin,
+                                         only_seg_bin=feat_only_bin)(pre_output)
         splitters.append(segment)
     splitters = concatenate(splitters) if splitters else None
 
@@ -127,6 +130,20 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
                            hidden_dropouts=hidden_dropouts)
     tnn_block = get_output(flat, name=f'out{block_no}')
+
+    if pred_seg_bin:
+        if not seg_type:
+            bin_block = SegTriangleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=True,
+                                         only_seg_bin=False)(tnn_block)
+        else:
+            bin_block = SegRightAngleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=True,
+                                           only_seg_bin=False)(tnn_block)
+
+        if add_pred:
+            tnn_block = Dense(1)(concatenate([tnn_block, bin_block]))
+        else:
+            tnn_block = Dense(1)(bin_block)
+
     return tnn_block, extra_inputs
 
 
@@ -137,24 +154,27 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
                   embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu',
                   fm_dist_func=lrelu, fm_rel_types='d', fm_exclude_selves=(False,),
                   get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
-                  hidden_dropouts=(0.3, 0.05)):
+                  hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
+                  add_pred=False):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
     if embed_dropout > 0:
         embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
 
-    segments = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func,
-                            seg_x_val_range) if seg_flag and seg_input is not None else[]
-    segments += get_segments(num_input, num_segs, shrink_factor ** block_no, seg_type, seg_func,
-                             seg_x_val_range) if seg_num_flag and num_input is not None else []
+    segments = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
+                            feat_seg_bin, feat_only_bin) if seg_flag and seg_input is not None else[]
+    segments += get_segments(num_input, num_segs, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
+                             feat_seg_bin, feat_only_bin) if seg_num_flag and num_input is not None else []
 
     if pre_output is not None:
         seg_y_dim = shrink(seg_y_dim, shrink_factor ** block_no)
         if not seg_type:
-            segment = SegTriangleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+            segment = SegTriangleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=feat_seg_bin,
+                                       only_seg_bin=feat_only_bin)(pre_output)
         else:
-            segment = SegRightAngleLayer(seg_y_dim, input_val_range=seg_y_val_range, seg_func=seg_func)(pre_output)
+            segment = SegRightAngleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=feat_seg_bin,
+                                         only_seg_bin=feat_only_bin)(pre_output)
         segments.append(segment)
     segments = BatchNormalization()(concatenate(segments)) if segments else None
     if seg_dropout > 0:
@@ -184,6 +204,20 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
                            hidden_dropouts=hidden_dropouts)
     tnn_block = get_output(flat, name=f'out{block_no}')
+
+    if pred_seg_bin:
+        if not seg_type:
+            bin_block = SegTriangleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=True,
+                                         only_seg_bin=False)(tnn_block)
+        else:
+            bin_block = SegRightAngleLayer(seg_y_dim, seg_y_val_range, seg_func, include_seg_bin=True,
+                                           only_seg_bin=False)(tnn_block)
+
+        if add_pred:
+            tnn_block = Dense(1)(concatenate([tnn_block, bin_block]))
+        else:
+            tnn_block = Dense(1)(bin_block)
+
     return tnn_block, extra_inputs
 
 
@@ -192,7 +226,8 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   seg_flag=True, add_seg_src=True, seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2,
                   seg_func=seu, seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu,
                   fm_rel_types='d', fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers,
-                  hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
+                  hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False,
+                  feat_only_bin=False, pred_seg_bin=False, add_pred=False):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -205,6 +240,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
         seg_func=seg_func, seg_dropout=seg_dropout, fm_dim=fm_dim, fm_dropout=fm_dropout, fm_activation=fm_activation,
         fm_dist_func=fm_dist_func, fm_rel_types=fm_rel_types, fm_exclude_selves=fm_exclude_selves,
         get_last_layers=get_last_layers, hidden_units=hidden_units, hidden_activation=hidden_activation,
-        hidden_dropouts=hidden_dropouts)
+        hidden_dropouts=hidden_dropouts, feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin,
+        pred_seg_bin=pred_seg_bin, add_pred=add_pred)
     tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs)
     return tnn

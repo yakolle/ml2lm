@@ -7,7 +7,8 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
                    add_seg_src=True, seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu,
                    seg_dropout=0.1, fm_dim=320, fm_dropout=0.3, fm_activation='relu', fm_dist_func=lrelu,
                    fm_rel_types='d', fm_exclude_selves=(False,), get_last_layers=get_default_dense_layers,
-                   hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05)):
+                   hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False,
+                   feat_only_bin=False, pred_seg_bin=False, add_pred=False):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -23,7 +24,8 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
               'seg_dropout': seg_dropout, 'fm_dim': fm_dim, 'fm_dropout': fm_dropout, 'fm_activation': fm_activation,
               'fm_dist_func': fm_dist_func, 'fm_rel_types': fm_rel_types, 'fm_exclude_selves': fm_exclude_selves,
               'get_last_layers': get_last_layers, 'hidden_units': hidden_units, 'hidden_activation': hidden_activation,
-              'hidden_dropouts': hidden_dropouts}
+              'hidden_dropouts': hidden_dropouts, 'feat_seg_bin': feat_seg_bin, 'feat_only_bin': feat_only_bin,
+              'pred_seg_bin': pred_seg_bin, 'add_pred': add_pred}
 
     if block_num <= 1:
         btnn, extra_inputs = get_tnn_block(0, **params)

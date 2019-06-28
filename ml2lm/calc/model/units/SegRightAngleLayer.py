@@ -8,8 +8,8 @@ from ml2lm.calc.model.units.activations import seu
 
 
 class SegRightAngleLayer(Layer):
-    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, seg_width_fixed=False,
-                 include_seg_bin=False, only_seg_bin=False, **kwargs):
+    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, dive_height=20., pos_fixed=True,
+                 seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -26,6 +26,7 @@ class SegRightAngleLayer(Layer):
 
         self.input_val_range = input_val_range
         self.seg_func = seg_func
+        self.dive_height = dive_height
         self.pos_fixed = pos_fixed
         self.seg_width_fixed = seg_width_fixed
 
@@ -75,8 +76,8 @@ class SegRightAngleLayer(Layer):
         if not self.only_seg_bin:
             left_out = self.left_pos - inputs
             middle_tmp_out = None if self.middle_pos is None else self.seg_func(inputs - self.middle_pos)
-            middle_out = None if self.middle_pos is None else middle_tmp_out * bk.sign(
-                self.middle_pos + self.middle_seg_width - inputs)
+            middle_out = None if self.middle_pos is None else middle_tmp_out - self.dive_height * self.seg_func(
+                inputs - self.middle_pos - self.middle_seg_width)
             right_out = inputs - self.right_pos
 
             if self.middle_pos is not None:
@@ -113,6 +114,7 @@ class SegRightAngleLayer(Layer):
             'seg_num': self.seg_num,
             'input_val_range': self.input_val_range,
             'seg_func': self.seg_func,
+            'dive_height': self.dive_height,
             'pos_fixed': self.pos_fixed,
             'seg_width_fixed': self.seg_width_fixed,
             'include_seg_bin': self.include_seg_bin,

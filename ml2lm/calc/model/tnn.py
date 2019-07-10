@@ -3,7 +3,7 @@ from keras.layers import concatenate, Multiply
 from keras.optimizers import Adam
 
 from ml2lm.calc.model.nn_util import *
-from ml2lm.calc.model.units.FMLayer import *
+from ml2lm.calc.model.units.rel import *
 
 
 def get_linear_output(flat, name=None):

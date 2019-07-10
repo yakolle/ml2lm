@@ -15,7 +15,7 @@ def lsm(x):
 
 
 class FMLayer(Layer):
-    def __init__(self, factor_rank, dist_func=bk.relu, exclude_selves=(False,), rel_types='d', activation='relu',
+    def __init__(self, factor_rank, dist_func=bk.relu, exclude_selves=(False,), rel_types='d', activation=None,
                  use_bias=False, kernel_initializer='glorot_uniform', bias_initializer='zeros', kernel_regularizer=None,
                  bias_regularizer=None, activity_regularizer=None, kernel_constraint=None, bias_constraint=None,
                  **kwargs):
@@ -45,26 +45,24 @@ class FMLayer(Layer):
         self.rel_map = {}
         self.exclude_self_map = dict(zip(rel_types, self.exclude_selves))
 
+    def _add_kernel(self, input_dim, name=None):
+        return self.add_weight(shape=(input_dim, self.factor_rank), initializer=self.kernel_initializer, name=name,
+                               regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
+
     def build(self, input_shape):
         assert len(input_shape) >= 2
         input_dim = input_shape[-1]
 
         if 'v' in self.rel_types:
-            self.rel_map['v'] = self.add_weight(shape=(input_dim, self.factor_rank),
-                                                initializer=self.kernel_initializer, name='val_rel',
-                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
+            self.rel_map['v'] = self._add_kernel(input_dim, 'val_rel')
         else:
             self.rel_map['v'] = None
         if 'd' in self.rel_types:
-            self.rel_map['d'] = self.add_weight(shape=(input_dim, self.factor_rank),
-                                                initializer=self.kernel_initializer, name='dist_rel',
-                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
+            self.rel_map['d'] = self._add_kernel(input_dim, 'dist_rel')
         else:
             self.rel_map['d'] = None
         if 'e' in self.rel_types:
-            self.rel_map['e'] = self.add_weight(shape=(input_dim, self.factor_rank),
-                                                initializer=self.kernel_initializer, name='ent_rel',
-                                                regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
+            self.rel_map['e'] = self._add_kernel(input_dim, 'ent_rel')
         else:
             self.rel_map['e'] = None
 

@@ -1,14 +1,10 @@
 import os
 import random
 
-import keras.backend as bk
-import numpy as np
 import tensorflow as tf
-from keras.layers import Embedding, Flatten, Dense, BatchNormalization, Activation, Dropout, Lambda
+from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Dropout, Lambda
 
-from ml2lm.calc.model.units.SegRightAngleLayer import SegRightAngleLayer
-from ml2lm.calc.model.units.SegTriangleLayer import SegTriangleLayer
-from ml2lm.calc.model.units.activations import seu
+from ml2lm.calc.model.units.seg import *
 
 
 def init_tensorflow():

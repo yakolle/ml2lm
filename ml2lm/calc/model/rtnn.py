@@ -1,10 +1,9 @@
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 from keras.engine import InputLayer
-from keras.initializers import Constant
 from keras.layers import Add
 
 from ml2lm.calc.model.tnn import *
-from ml2lm.calc.model.units.CVAccelerator import CVAccelerator
+from ml2lm.calc.model.units.callbacks import CVAccelerator
 
 
 def simple_train(tnn_model, tx, ty, vx=None, vy=None, epochs=300, batch_size=1024, model_save_dir='.', model_id='rtnn',

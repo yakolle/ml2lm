@@ -140,3 +140,135 @@ class FMLayer(Layer):
         }
         base_config = super(FMLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+def rel_mul(x, y):
+    return x * y
+
+
+def rel_div(epsilon=1e-3):
+    def _rel_div(x, y):
+        neg_flag = bk.cast(y < 0, y.dtype)
+        clip_flag = bk.cast(bk.abs(y) > epsilon, y.dtype)
+        return x / (clip_flag * y + (1. - clip_flag) * epsilon * (1. - 2. * neg_flag))
+
+    return _rel_div
+
+
+class BiRelLayer(Layer):
+    def __init__(self, factor_rank, trans_func=bk.relu, op_func=rel_mul, rel_types='d', use_bias=True,
+                 kernel_initializer='glorot_uniform', bias_initializer='zeros', kernel_regularizer=None,
+                 bias_regularizer=None, activity_regularizer=None, kernel_constraint=None, bias_constraint=None,
+                 **kwargs):
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+        super(BiRelLayer, self).__init__(**kwargs)
+        self.supports_masking = True
+
+        self.factor_rank = factor_rank
+
+        self.trans_func = trans_func
+        self.op_func = op_func
+        self.rel_types = rel_types
+
+        self.use_bias = use_bias
+        self.kernel_initializer = initializers.get(kernel_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.kernel_regularizer = regularizers.get(kernel_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.activity_regularizer = regularizers.get(activity_regularizer)
+        self.kernel_constraint = constraints.get(kernel_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
+        self.input_spec = InputSpec(min_ndim=2)
+
+        self.rel_map = {}
+        self.bias_map = {}
+
+    def _add_kernel(self, input_dim, name=None):
+        return self.add_weight(shape=(input_dim, self.factor_rank), initializer=self.kernel_initializer, name=name,
+                               regularizer=self.kernel_regularizer, constraint=self.kernel_constraint)
+
+    def _add_bias(self, name=None):
+        return self.add_weight(shape=(self.factor_rank,), initializer=self.bias_initializer, name=name,
+                               regularizer=self.bias_regularizer, constraint=self.bias_constraint)
+
+    def build(self, input_shape):
+        assert len(input_shape) >= 2
+        input_dim = input_shape[-1]
+
+        if 'v' in self.rel_types:
+            self.rel_map['v'] = (self._add_kernel(input_dim, 'val_rel1'), self._add_kernel(input_dim, 'val_rel2'))
+            if self.use_bias:
+                self.bias_map['v'] = (self._add_bias('val_bias1'), self._add_bias('val_bias2'))
+            else:
+                self.bias_map['v'] = None
+        else:
+            self.rel_map['v'] = self.bias_map['v'] = None
+
+        if 'd' in self.rel_types:
+            self.rel_map['d'] = (self._add_kernel(input_dim, 'dist_rel1'), self._add_kernel(input_dim, 'dist_rel2'))
+            if self.use_bias:
+                self.bias_map['d'] = (self._add_bias('dist_bias1'), self._add_bias('dist_bias2'))
+            else:
+                self.bias_map['d'] = None
+        else:
+            self.rel_map['d'] = self.bias_map['d'] = None
+
+        if 'e' in self.rel_types:
+            self.rel_map['e'] = (self._add_kernel(input_dim, 'ent_rel1'), self._add_kernel(input_dim, 'ent_rel2'))
+            if self.use_bias:
+                self.bias_map['e'] = (self._add_bias('ent_bias1'), self._add_bias('ent_bias2'))
+            else:
+                self.bias_map['e'] = None
+        else:
+            self.rel_map['e'] = self.bias_map['e'] = None
+
+        self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
+        self.built = True
+
+    def _call(self, rel_type, inputs):
+        kernel1, kernel2 = self.rel_map[rel_type]
+
+        inputs1 = inputs2 = inputs
+        if 'd' == rel_type:
+            inputs1 = inputs2 = self.trans_func(inputs)
+        elif 'e' == rel_type:
+            inputs2 = self.trans_func(inputs)
+
+        if self.use_bias:
+            bias1, bias2 = self.bias_map[rel_type]
+            output = self.op_func(bk.bias_add(bk.dot(inputs1, kernel1), bias1),
+                                  bk.bias_add(bk.dot(inputs2, kernel2), bias2))
+        else:
+            output = self.op_func(bk.dot(inputs1, kernel1), bk.dot(inputs2, kernel2))
+
+        return output
+
+    def call(self, inputs, **kwargs):
+        outputs = [self._call(rel_type, inputs) for rel_type in self.rel_types]
+        return bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and 2 == len(input_shape)
+        assert input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] = self.factor_rank * len(self.rel_types)
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {
+            'factor_rank': self.factor_rank,
+            'trans_func': self.trans_func,
+            'op_func': self.op_func,
+            'rel_types': self.rel_types,
+            'use_bias': self.use_bias,
+            'kernel_initializer': initializers.serialize(self.kernel_initializer),
+            'bias_initializer': initializers.serialize(self.bias_initializer),
+            'kernel_regularizer': regularizers.serialize(self.kernel_regularizer),
+            'bias_regularizer': regularizers.serialize(self.bias_regularizer),
+            'activity_regularizer': regularizers.serialize(self.activity_regularizer),
+            'kernel_constraint': constraints.serialize(self.kernel_constraint),
+            'bias_constraint': constraints.serialize(self.bias_constraint)
+        }
+        base_config = super(BiRelLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))

@@ -79,13 +79,8 @@ class Cutoff(AdjustableLayer):
                 ret /= keep_prob
             return ret
 
-        cut_func = _cut
-        alt_func = inputs
-        if 0. < self.dist_rate < 1.:
-            cut_func = _drop
-            if self.cut_in_test:
-                alt_func = _cut
-
+        cut_func = _drop if 0. < self.dist_rate < 1. else _cut
+        alt_func = _cut if self.cut_in_test else inputs
         return bk.in_train_phase(cut_func, alt_func, training=training)
 
     def get_config(self):

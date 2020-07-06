@@ -48,8 +48,9 @@ class Cutoff(AdjustableLayer):
 
         data_type = inputs.dtype
         if self.axis is not None:
-            noise_shape = [1] * len(bk.int_shape(inputs))
-            noise_shape[self.axis] = noise_shape[self.axis]
+            input_shape = bk.int_shape(inputs)
+            noise_shape = [1] * len(input_shape)
+            noise_shape[self.axis] = input_shape[self.axis]
             noise_shape = tuple(noise_shape)
         else:
             noise_shape = bk.shape(inputs)
@@ -104,8 +105,8 @@ class Cutoff(AdjustableLayer):
 
 
 class PeriodDropout(Dropout, AdjustableLayer):
-    def __init__(self, rate, noise_shape=None, seed=0, period=10, axis=None, **kwargs):
-        super(PeriodDropout, self).__init__(rate, noise_shape, seed, **kwargs)
+    def __init__(self, rate, period=10, axis=None, seed=0, **kwargs):
+        super(PeriodDropout, self).__init__(rate, seed=seed, **kwargs)
         self.supports_masking = True
 
         self.period = period
@@ -123,8 +124,9 @@ class PeriodDropout(Dropout, AdjustableLayer):
 
         if 0. < self.rate < 1.:
             if self.axis is not None:
-                noise_shape = [1] * len(bk.int_shape(inputs))
-                noise_shape[self.axis] = noise_shape[self.axis]
+                input_shape = bk.int_shape(inputs)
+                noise_shape = [1] * len(input_shape)
+                noise_shape[self.axis] = input_shape[self.axis]
                 noise_shape = tuple(noise_shape)
             else:
                 noise_shape = self._get_noise_shape(inputs)

@@ -142,12 +142,94 @@ class EVPerEpoch(Callback):
 
 
 class TimeMonitor(Callback):
-    def __init__(self, early_stopper, end_time):
+    def __init__(self, early_stopper, end_time, momentum=0.9):
         super(TimeMonitor, self).__init__()
         self.early_stopper = early_stopper
         self.end_time = end_time
+        self.momentum = momentum
+
+        self.last_time = time.time()
+        self.spend_time = 0
 
     def on_epoch_end(self, epoch, logs=None):
-        if time.time() > self.end_time:
+        if self.model.stop_training:
+            self.early_stopper.stopped_epoch = epoch + 1
+
+        cur_time = time.time()
+        cur_spend_time = cur_time - self.last_time
+        self.last_time = cur_time
+        self.spend_time = self.momentum * max(self.spend_time, cur_spend_time) + (1 - self.momentum) * cur_spend_time
+        if cur_time + self.spend_time >= self.end_time:
             self.early_stopper.stopped_epoch = epoch + 1
             self.model.stop_training = True
+
+
+def make_squash_flip_ratio(flip_ratio, signal_lr, init_lr=1e-3, peak_point=0.25, pressure=2.):
+    def _squash(_x):
+        return 1 / (1 + abs(_x)) ** pressure
+
+    def _squash_fr(cur_lr):
+        lr0 = signal_lr
+        lr2 = init_lr
+        lr1 = (1 - peak_point) * lr0 + peak_point * lr2
+        fr = _squash(lr0 - lr1) if cur_lr < lr1 else _squash(lr2 - lr1)
+        return flip_ratio * (_squash(cur_lr - lr1) - fr) / (1 - fr)
+
+    return _squash_fr
+
+
+def make_constant_flip_ratio(flip_ratio, signal_lr):
+    def _fr(cur_lr):
+        return flip_ratio if cur_lr >= signal_lr else 0.
+
+    return _fr
+
+
+class FlipModel(Callback):
+    def __init__(self, proto_model, init_flip_ratio=0.8, train_flip_ratio=0., signal_lr=1e-4, axis=0, need_init=True,
+                 train_fr_adjust_func=None):
+        super(FlipModel, self).__init__()
+        self.proto_model = proto_model
+        self.init_flip_ratio = init_flip_ratio
+        self.train_flip_ratio = train_flip_ratio
+        self.signal_lr = signal_lr
+        self.axis = axis
+        self.need_init = need_init
+        self.train_fr_adjust_func = train_fr_adjust_func
+
+        if self.train_fr_adjust_func is None:
+            self.train_fr_adjust_func = make_constant_flip_ratio(self.train_flip_ratio, self.signal_lr)
+
+        self.flipped_weights = self._flip_weights()
+
+    def _flip_weights(self):
+        flipped_weights = []
+        proto_weights = self.proto_model.trainable_weights
+        for pw in proto_weights:
+            if self.axis is not None:
+                min_w, max_w = bk.min(pw, axis=self.axis, keepdims=True), bk.max(pw, axis=self.axis, keepdims=True)
+            else:
+                min_w, max_w = bk.min(pw), bk.max(pw)
+            flipped_weights.append(min_w + max_w - pw)
+        return bk.batch_get_value(flipped_weights)
+
+    def _merge(self, flip_ratio):
+        tws = self.model.trainable_weights
+        t_weights = bk.batch_get_value(tws)
+        ws = []
+        for tw, fw in zip(t_weights, self.flipped_weights):
+            ws.append((1 - flip_ratio) * tw + flip_ratio * fw)
+        bk.batch_set_value(list(zip(tws, ws)))
+
+    def on_train_begin(self, logs=None):
+        if self.need_init:
+            init_weight = self.proto_model.get_weights()
+            self.model.set_weights(init_weight)
+            self._merge(self.init_flip_ratio)
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if self.train_flip_ratio > 0:
+            lr = bk.get_value(self.model.optimizer.lr)
+            fr = self.train_fr_adjust_func(lr)
+            if fr > 0:
+                self._merge(fr)

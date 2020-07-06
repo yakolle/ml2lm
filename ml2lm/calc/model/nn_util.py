@@ -16,7 +16,11 @@ def set_seed(_seed=10000):
     os.environ['PYTHONHASHSEED'] = str(_seed + 6)
     np.random.seed(_seed + 7)
     random.seed(_seed + 8)
-    tf.set_random_seed(_seed + 9)
+    try:
+        tf.random.set_seed(_seed + 9)
+    except Exception as e:
+        print(e)
+        tf.set_random_seed(_seed + 9)
 
 
 def read_weights(model, weights_path):
@@ -86,6 +90,7 @@ def shrink(dim, shrink_factor):
 def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
     embeds = []
     for i, in_dim in enumerate(cat_in_dims):
+        # embed = cat_input[:, i, None] if keras.version >= '2.4.0' else Lambda(lambda cats: cats[:, i, None])(cat_input)
         embed = Lambda(lambda cats: cats[:, i, None])(cat_input)
         embed = Embedding(in_dim, shrink(cat_out_dims[i], shrink_factor))(embed)
         embeds.append(Flatten()(embed))
@@ -93,15 +98,22 @@ def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
 
 
 def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1),
-                 seg_bin=False, only_bin=False):
+                 seg_bin=False, only_bin=False, scale_n=0, scope_type='global'):
     segments = []
     for i, out_dim in enumerate(seg_out_dims):
+        # segment = seg_input[:, i, None] if keras.version >= '2.4.0' else Lambda(lambda segs: segs[:, i, None])(
+        #     seg_input)
         segment = Lambda(lambda segs: segs[:, i, None])(seg_input)
-        if not seg_type:
-            segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                       seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
+        if scale_n > 0:
+            segment = WaveletWrapper(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
+                                     seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin,
+                                     seg_type=seg_type, scale_n=scale_n, scope_type=scope_type)(segment)
         else:
-            segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                         seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
+            if not seg_type:
+                segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
+                                           seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
+            else:
+                segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
+                                             seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
         segments.append(segment)
     return segments

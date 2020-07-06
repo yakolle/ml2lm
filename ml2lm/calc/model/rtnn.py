@@ -28,7 +28,7 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
                     seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
                     rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
                     hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False,
-                    pred_seg_bin=False, add_pred=False):
+                    pred_seg_bin=False, add_pred=False, init_lr=1e-3):
     if isinstance(res_shrinkage, float):
         res_shrinkage = [res_shrinkage] * (num_round - 1)
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
@@ -59,7 +59,7 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
             extra_inputs.append(lp_input)
 
         tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
-                           other_inputs=extra_inputs)
+                           other_inputs=extra_inputs, init_lr=init_lr)
         rtnns.append(tnn)
     return rtnns
 

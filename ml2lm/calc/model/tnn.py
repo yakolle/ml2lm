@@ -11,7 +11,7 @@ def get_linear_output(flat, name=None):
 
 
 def compile_default_mse_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
-                               loss_weights=None):
+                               loss_weights=None, init_lr=1e-3):
     inputs = [cat_input] if cat_input is not None else []
     if seg_input is not None:
         inputs.append(seg_input)
@@ -21,7 +21,7 @@ def compile_default_mse_output(outputs, cat_input=None, seg_input=None, num_inpu
         inputs.extend(other_inputs)
 
     dnn = Model(inputs, outputs)
-    dnn.compile(loss='mse', optimizer=Adam(lr=1e-3), loss_weights=loss_weights)
+    dnn.compile(loss='mse', optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
     return dnn
 
 
@@ -42,7 +42,7 @@ def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_
 
 
 def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
-                               loss_weights=None):
+                               loss_weights=None, init_lr=1e-3):
     inputs = [cat_input] if cat_input is not None else []
     if seg_input is not None:
         inputs.append(seg_input)
@@ -52,14 +52,14 @@ def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_inpu
         inputs.extend(other_inputs)
 
     dnn = Model(inputs, outputs)
-    dnn.compile(loss='binary_crossentropy', optimizer=Adam(lr=1e-3), loss_weights=loss_weights)
+    dnn.compile(loss='binary_crossentropy', optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
     return dnn
 
 
 def get_default_rel_conf():
     return [{'rel_id': 'fm', 'dropout': 0.4,
              'conf': {'factor_rank': 320, 'dist_func': lrelu, 'rel_types': 'd', 'exclude_selves': (False,)}},
-            {'rel_id': 'bi_rel', 'dropout': 0.8,
+            {'rel_id': 'br', 'dropout': 0.8,
              'conf': {'factor_rank': 320, 'trans_func': lrelu, 'op_func': rel_mul, 'rel_types': 'd'}}]
 
 
@@ -238,7 +238,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
                   get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
                   hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
-                  add_pred=False):
+                  add_pred=False, init_lr=1e-3):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -251,5 +251,6 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
         seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf, get_last_layers=get_last_layers,
         hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts,
         feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred)
-    tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs)
+    tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs,
+                       init_lr=init_lr)
     return tnn

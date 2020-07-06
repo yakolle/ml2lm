@@ -7,7 +7,24 @@ from keras.layers import Dense
 from ml2lm.calc.model.units.activations import seu
 
 
-class SegTriangleLayer(Layer):
+class SegLayer(Layer):
+    def get_segs(self, inputs, **kwargs):
+        return inputs
+
+    def call(self, inputs, **kwargs):
+        outputs = self.get_segs(inputs, **kwargs)
+        return bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
+
+    @staticmethod
+    def calc_seg_out_num(seg_num):
+        return seg_num
+
+    @staticmethod
+    def calc_seg_num(seg_out_dim):
+        return seg_out_dim
+
+
+class SegTriangleLayer(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, win_func=bk.abs, pos_fixed=True,
                  seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, **kwargs):
         assert seg_num >= 2
@@ -68,7 +85,7 @@ class SegTriangleLayer(Layer):
         self.input_spec = InputSpec(min_ndim=2, axes={-1: 1})
         self.built = True
 
-    def call(self, inputs, **kwargs):
+    def get_segs(self, inputs, **kwargs):
         outputs = []
 
         left_out = middle_tmp_out = right_out = None
@@ -98,13 +115,21 @@ class SegTriangleLayer(Layer):
                 output = bk.concatenate([left_out, right_out])
             outputs.append(bk.cast(output > 0, inputs.dtype))
 
-        return bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
+        return outputs
+
+    @staticmethod
+    def calc_seg_out_num(seg_num):
+        return seg_num + (seg_num > 2)
+
+    @staticmethod
+    def calc_seg_num(seg_out_dim):
+        return seg_out_dim - (seg_out_dim > 2)
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)
         assert 1 == input_shape[-1]
         output_shape = list(input_shape)
-        output_shape[-1] = (self.seg_num + (self.seg_num > 2)) * (1 + self.include_seg_bin - self.only_seg_bin)
+        output_shape[-1] = self.calc_seg_out_num(self.seg_num) * (1 + self.include_seg_bin - self.only_seg_bin)
         return tuple(output_shape)
 
     def get_config(self):
@@ -122,7 +147,7 @@ class SegTriangleLayer(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
 
-class SegRightAngleLayer(Layer):
+class SegRightAngleLayer(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, dive_height=20., pos_fixed=True,
                  seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, **kwargs):
         assert seg_num >= 2
@@ -183,7 +208,7 @@ class SegRightAngleLayer(Layer):
         self.input_spec = InputSpec(min_ndim=2, axes={-1: 1})
         self.built = True
 
-    def call(self, inputs, **kwargs):
+    def get_segs(self, inputs, **kwargs):
         outputs = []
 
         left_out = middle_tmp_out = right_out = None
@@ -215,7 +240,7 @@ class SegRightAngleLayer(Layer):
                 output = bk.concatenate([left_out, right_out])
             outputs.append(bk.cast(output > 0, inputs.dtype))
 
-        return bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
+        return outputs
 
     def compute_output_shape(self, input_shape):
         assert input_shape and 2 == len(input_shape)
@@ -236,6 +261,88 @@ class SegRightAngleLayer(Layer):
             'only_seg_bin': self.only_seg_bin
         }
         base_config = super(SegRightAngleLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class WaveletWrapper(SegLayer):
+    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, seg_width_fixed=False,
+                 include_seg_bin=False, only_seg_bin=False, seg_type=0, scale_n=3, scope_type='global', **kwargs):
+        assert seg_num >= 2
+
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+        wl_args = kwargs.copy()
+        for k in wl_args.keys():
+            if k not in self.allowed_kwargs:
+                wl_args.pop(k)
+        kwargs.update({'input_val_range': input_val_range, 'seg_func': seg_func, 'pos_fixed': pos_fixed,
+                       'seg_width_fixed': seg_width_fixed, 'include_seg_bin': include_seg_bin,
+                       'only_seg_bin': only_seg_bin})
+
+        super(WaveletWrapper, self).__init__(**wl_args)
+        self.seg_type = seg_type
+        self.scale_n = scale_n
+        self.scope_type = scope_type
+
+        Seg = SegRightAngleLayer if seg_type else SegTriangleLayer
+        self.base_seg_layer = Seg(seg_num, **kwargs)
+        self.seg_layers = []
+        self.scales = []
+        for i in range(1, scale_n + 1):
+            self.seg_layers.append(Seg(Seg.calc_seg_num(Seg.calc_seg_out_num(seg_num) * 2 ** i), **kwargs))
+
+        self.input_spec = InputSpec(min_ndim=2)
+        self.supports_masking = True
+
+    def build(self, input_shape):
+        self.base_seg_layer.build(input_shape)
+        for i, seg_layer in enumerate(self.seg_layers):
+            seg_layer.build(input_shape)
+
+            cur_scales = []
+            for j in range(1 + seg_layer.include_seg_bin - seg_layer.only_seg_bin):
+                cur_scales.append(
+                    self.add_weight(name=f'scale_{i}_{j}', shape=(seg_layer.compute_output_shape(input_shape)[-1],),
+                                    initializer=Constant(value=1.)))
+            self.scales.append(cur_scales)
+
+    def get_segs(self, inputs, **kwargs):
+        outpus = self.base_seg_layer.get_segs(inputs, **kwargs)
+
+        for i in range(self.scale_n):
+            sub_seg_num = 2 ** (i + 1)
+            cur_outputs = self.seg_layers[i].get_segs(inputs, **kwargs)
+            seg_out_num = self.base_seg_layer.compute_output_shape(bk.int_shape(inputs))[-1]
+            sample_shape, sample_axis = ([-1, sub_seg_num, seg_out_num], 1) if 'global' == self.scope_type else (
+                [-1, seg_out_num, sub_seg_num], -1)
+            cur_outputs = [bk.max(bk.reshape(cur_out * cur_scale, sample_shape), axis=sample_axis) for
+                           cur_out, cur_scale in zip(cur_outputs, self.scales[i])]
+            outpus += cur_outputs
+
+        return outpus
+
+    @staticmethod
+    def calc_seg_out_num(seg_num):
+        return -1.
+
+    @staticmethod
+    def calc_seg_num(seg_out_dim):
+        return -1
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and 2 == len(input_shape)
+        assert 1 == input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] = (self.scale_n + 1) * self.base_seg_layer.compute_output_shape(input_shape)[-1]
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {
+            'seg_type': self.seg_type,
+            'scale_n': self.scale_n,
+            'scope_type': self.scope_type
+        }
+        base_config = self.base_seg_layer.get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 

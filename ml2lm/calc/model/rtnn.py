@@ -28,7 +28,8 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
                     seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
                     rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
                     hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False,
-                    pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global', init_lr=1e-3):
+                    pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global', bundle_scale=False,
+                    init_lr=1e-3):
     if isinstance(res_shrinkage, float):
         res_shrinkage = [res_shrinkage] * (num_round - 1)
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
@@ -53,7 +54,7 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, get_
             seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf, get_last_layers=get_last_layers,
             hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts,
             feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred,
-            scale_n=scale_n, scope_type=scope_type)
+            scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale)
         if i > 0:
             lp_input = Input(shape=[1], name='lp')
             tnn = Add()([tnn, Lambda(lambda ele: res_shrinkage[i - 1] * ele)(lp_input)])

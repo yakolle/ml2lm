@@ -88,26 +88,30 @@ def shrink(dim, shrink_factor):
 
 
 def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
+    import keras
+
     embeds = []
     for i, in_dim in enumerate(cat_in_dims):
-        # embed = cat_input[:, i, None] if keras.version >= '2.4.0' else Lambda(lambda cats: cats[:, i, None])(cat_input)
-        embed = Lambda(lambda cats: cats[:, i, None])(cat_input)
+        embed = cat_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(lambda cats: cats[:, i, None])(
+            cat_input)
         embed = Embedding(in_dim, shrink(cat_out_dims[i], shrink_factor))(embed)
         embeds.append(Flatten()(embed))
     return embeds
 
 
 def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1),
-                 seg_bin=False, only_bin=False, scale_n=0, scope_type='global'):
+                 seg_bin=False, only_bin=False, scale_n=0, scope_type='global', bundle_scale=False):
+    import keras
+
     segments = []
     for i, out_dim in enumerate(seg_out_dims):
-        # segment = seg_input[:, i, None] if keras.version >= '2.4.0' else Lambda(lambda segs: segs[:, i, None])(
-        #     seg_input)
-        segment = Lambda(lambda segs: segs[:, i, None])(seg_input)
-        if scale_n > 0:
+        segment = seg_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(lambda segs: segs[:, i, None])(
+            seg_input)
+        if scale_n > 0 or bundle_scale:
             segment = WaveletWrapper(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
                                      seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin,
-                                     seg_type=seg_type, scale_n=scale_n, scope_type=scope_type)(segment)
+                                     seg_type=seg_type, scale_n=scale_n, scope_type=scope_type,
+                                     bundle_scale=bundle_scale)(segment)
         else:
             if not seg_type:
                 segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,

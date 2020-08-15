@@ -266,7 +266,8 @@ class SegRightAngleLayer(SegLayer):
 
 class WaveletWrapper(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, seg_width_fixed=False,
-                 include_seg_bin=False, only_seg_bin=False, seg_type=0, scale_n=3, scope_type='global', **kwargs):
+                 include_seg_bin=False, only_seg_bin=False, seg_type=0, scale_n=3, scope_type='global',
+                 bundle_scale=True, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -283,13 +284,15 @@ class WaveletWrapper(SegLayer):
         self.seg_type = seg_type
         self.scale_n = scale_n
         self.scope_type = scope_type
+        self.bundle_scale = bundle_scale
 
         Seg = SegRightAngleLayer if seg_type else SegTriangleLayer
         self.base_seg_layer = Seg(seg_num, **kwargs)
-        self.seg_layers = []
         self.scales = []
-        for i in range(1, scale_n + 1):
-            self.seg_layers.append(Seg(Seg.calc_seg_num(Seg.calc_seg_out_num(seg_num) * 2 ** i), **kwargs))
+        self.seg_layers = [Seg(Seg.calc_seg_num(Seg.calc_seg_out_num(seg_num) * 2 ** i), **kwargs) for i in
+                           range(1, scale_n + 1)]
+        self.bundled_seg_layers = [Seg(2 ** i, **kwargs) for i in
+                                   range(1, int(np.ceil(np.log2(seg_num))))] if self.bundle_scale else []
 
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
@@ -305,6 +308,8 @@ class WaveletWrapper(SegLayer):
                     self.add_weight(name=f'scale_{i}_{j}', shape=(seg_layer.compute_output_shape(input_shape)[-1],),
                                     initializer=Constant(value=1.)))
             self.scales.append(cur_scales)
+        for seg_layer in self.bundled_seg_layers:
+            seg_layer.build(input_shape)
 
     def get_segs(self, inputs, **kwargs):
         outpus = self.base_seg_layer.get_segs(inputs, **kwargs)
@@ -318,6 +323,8 @@ class WaveletWrapper(SegLayer):
             cur_outputs = [bk.max(bk.reshape(cur_out * cur_scale, sample_shape), axis=sample_axis) for
                            cur_out, cur_scale in zip(cur_outputs, self.scales[i])]
             outpus += cur_outputs
+        for seg_layer in self.bundled_seg_layers:
+            outpus += seg_layer.get_segs(inputs, **kwargs)
 
         return outpus
 
@@ -334,13 +341,16 @@ class WaveletWrapper(SegLayer):
         assert 1 == input_shape[-1]
         output_shape = list(input_shape)
         output_shape[-1] = (self.scale_n + 1) * self.base_seg_layer.compute_output_shape(input_shape)[-1]
+        for seg_layer in self.bundled_seg_layers:
+            output_shape[-1] += seg_layer.compute_output_shape(input_shape)[-1]
         return tuple(output_shape)
 
     def get_config(self):
         config = {
             'seg_type': self.seg_type,
             'scale_n': self.scale_n,
-            'scope_type': self.scope_type
+            'scope_type': self.scope_type,
+            'bundle_scale': self.bundle_scale
         }
         base_config = self.base_seg_layer.get_config()
         return dict(list(base_config.items()) + list(config.items()))

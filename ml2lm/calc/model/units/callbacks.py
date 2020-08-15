@@ -186,7 +186,7 @@ def make_constant_flip_ratio(flip_ratio, signal_lr):
 
 
 class FlipModel(Callback):
-    def __init__(self, proto_model, init_flip_ratio=0.8, train_flip_ratio=0., signal_lr=1e-4, axis=0, need_init=True,
+    def __init__(self, proto_model, init_flip_ratio=0.1, train_flip_ratio=0., signal_lr=1e-4, axis=-1, need_init=True,
                  train_fr_adjust_func=None):
         super(FlipModel, self).__init__()
         self.proto_model = proto_model

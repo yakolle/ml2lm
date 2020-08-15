@@ -7,7 +7,8 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
                    seg_num_flag=True, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
                    rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
                    hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False,
-                   pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global', init_lr=1e-3):
+                   pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global', bundle_scale=False,
+                   init_lr=1e-3):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -23,7 +24,7 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
               'seg_dropout': seg_dropout, 'rel_conf': rel_conf, 'get_last_layers': get_last_layers,
               'hidden_units': hidden_units, 'hidden_activation': hidden_activation, 'hidden_dropouts': hidden_dropouts,
               'feat_seg_bin': feat_seg_bin, 'feat_only_bin': feat_only_bin, 'pred_seg_bin': pred_seg_bin,
-              'add_pred': add_pred, 'scale_n': scale_n, 'scope_type': scope_type}
+              'add_pred': add_pred, 'scale_n': scale_n, 'scope_type': scope_type, 'bundle_scale': bundle_scale}
 
     if block_num <= 1:
         btnn, extra_inputs = get_tnn_block(0, **params)
@@ -47,7 +48,7 @@ def get_btnn_model(x, y, get_output=get_linear_output, compile_func=compile_defa
                 seg_x_val_range, block_num - 1, shrink_factor, seg_y_dim, prev_block_weight_files, seg_flag,
                 add_seg_src, seg_num_flag, get_extra_layers, embed_dropout, seg_func, seg_dropout, rel_conf,
                 get_last_layers, hidden_units, hidden_activation, hidden_dropouts, feat_seg_bin, feat_only_bin,
-                pred_seg_bin, add_pred, scale_n, scope_type, init_lr)
+                pred_seg_bin, add_pred, scale_n, scope_type, bundle_scale, init_lr)
             read_weights(btnn, prev_block_weight_files[block_num - 2])
             for layer in btnn.layers:
                 layer.trainable = False

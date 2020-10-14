@@ -246,7 +246,7 @@ class SegRightAngleLayer(SegLayer):
         assert input_shape and 2 == len(input_shape)
         assert 1 == input_shape[-1]
         output_shape = list(input_shape)
-        output_shape[-1] = self.seg_num * (1 + self.include_seg_bin - self.only_seg_bin)
+        output_shape[-1] = self.calc_seg_out_num(self.seg_num) * (1 + self.include_seg_bin - self.only_seg_bin)
         return tuple(output_shape)
 
     def get_config(self):
@@ -305,7 +305,7 @@ class WaveletWrapper(SegLayer):
             cur_scales = []
             for j in range(1 + seg_layer.include_seg_bin - seg_layer.only_seg_bin):
                 cur_scales.append(
-                    self.add_weight(name=f'scale_{i}_{j}', shape=(seg_layer.compute_output_shape(input_shape)[-1],),
+                    self.add_weight(name=f'scale_{i}_{j}', shape=(seg_layer.calc_seg_out_num(seg_layer.seg_num),),
                                     initializer=Constant(value=1.)))
             self.scales.append(cur_scales)
         for seg_layer in self.bundled_seg_layers:
@@ -317,7 +317,7 @@ class WaveletWrapper(SegLayer):
         for i in range(self.scale_n):
             sub_seg_num = 2 ** (i + 1)
             cur_outputs = self.seg_layers[i].get_segs(inputs, **kwargs)
-            seg_out_num = self.base_seg_layer.compute_output_shape(bk.int_shape(inputs))[-1]
+            seg_out_num = self.base_seg_layer.calc_seg_out_num(self.base_seg_layer.seg_num)
             sample_shape, sample_axis = ([-1, sub_seg_num, seg_out_num], 1) if 'global' == self.scope_type else (
                 [-1, seg_out_num, sub_seg_num], -1)
             cur_outputs = [bk.max(bk.reshape(cur_out * cur_scale, sample_shape), axis=sample_axis) for

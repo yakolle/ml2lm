@@ -1,3 +1,4 @@
+import tensorflow as tf
 from keras import backend as bk
 from keras.engine import Layer
 from keras.layers import Dropout
@@ -143,6 +144,85 @@ class PeriodDropout(Dropout, AdjustableLayer):
             'axis': self.axis
         }
         base_config = super(PeriodDropout, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
+class SegDropout(Dropout, AdjustableLayer):
+    def __init__(self, rate, anneal=0.1, noise_type='gaussian', keep_amp_type='abs', epsilon=1e-6, period=None,
+                 axis=None, seed=None, **kwargs):
+        super(SegDropout, self).__init__(rate, seed=seed, **kwargs)
+        self.supports_masking = True
+
+        self.anneal = 0.5 + anneal
+        self.noise_type = noise_type
+        self.keep_amp_type = keep_amp_type
+        self.epsilon = epsilon
+
+        self.period = period
+        self.axis = axis
+
+        self.call_cnt = 0
+
+    def adjust(self):
+        self.seed += 1
+
+    def call(self, inputs, training=None):
+        self.call_cnt += 1
+        if self.period is not None and not self.call_cnt % self.period:
+            self.adjust()
+
+        if 0. < self.rate < 1.:
+            input_shape = bk.int_shape(inputs)
+            if self.axis is not None:
+                noise_shape = [1] * len(input_shape)
+                noise_shape[self.axis] = input_shape[self.axis]
+                noise_shape = tuple(noise_shape)
+            else:
+                noise_shape = bk.shape(inputs)
+
+            def dropped_inputs():
+                x_mean = bk.mean(inputs, axis=0)
+                x_min, x_max = bk.min(x_mean), bk.max(x_mean)
+                x_mean_int = bk.cast(input_shape[-1] * (x_mean - x_min) / (x_max - x_min), 'int32')
+                y, idx, counts = tf.unique_with_counts(x_mean_int)
+                dr = self.rate ** (1. / (self.anneal * bk.cast(counts, inputs.dtype)))
+                dr = tf.where(1 == counts, self.rate * bk.ones_like(dr), dr)
+
+                if 'gaussian' == self.noise_type:
+                    sigma = (dr / (1. - dr)) ** .5
+                    return inputs * bk.map_fn(lambda i: bk.random_normal((1,), 1., sigma[i], dtype=inputs.dtype)[0],
+                                              idx, dtype=inputs.dtype)
+                else:
+                    dr_tensor = bk.random_uniform(noise_shape, seed=self.seed, dtype=inputs.dtype)
+                    ret = inputs * bk.cast(dr_tensor >= bk.gather(dr, idx), inputs.dtype)
+
+                    if 'abs' == self.keep_amp_type:
+                        old_amps = bk.sum(bk.abs(inputs), axis=-1, keepdims=True)
+                        cur_amps = bk.sum(bk.stop_gradient(bk.abs(ret)), axis=-1, keepdims=True)
+                        ret = ret * old_amps / (cur_amps + self.epsilon)
+                    elif self.keep_amp_type is not None:
+                        old_amps = bk.sum(inputs, axis=-1, keepdims=True)
+                        cur_amps = bk.sum(bk.stop_gradient(ret), axis=-1, keepdims=True)
+                        ret = ret * old_amps / (cur_amps + self.epsilon)
+
+                    return ret
+
+            return bk.in_train_phase(dropped_inputs, inputs, training=training)
+        return inputs
+
+    def get_config(self):
+        config = {
+            'anneal': self.anneal,
+            'noise_type': self.noise_type,
+            'keep_amp_type': self.keep_amp_type,
+            'epsilon': self.epsilon,
+            'period': self.period,
+            'axis': self.axis
+        }
+        base_config = super(SegDropout, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
     def compute_output_shape(self, input_shape):

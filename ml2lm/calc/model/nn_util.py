@@ -1,9 +1,9 @@
 import os
 import random
 
-import tensorflow as tf
-from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Dropout, Lambda
+from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Lambda
 
+from ml2lm.calc.model.units.dropouts import *
 from ml2lm.calc.model.units.seg import *
 
 
@@ -70,14 +70,39 @@ def to_tnn_data(x, cat_indices=None, seg_indices=None, num_indices=None):
     return nn_data
 
 
-def add_dense(x, units, bn=True, activation=seu, dropout=0.2):
+def make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
+                epsilon=1e-6):
+    def _cutoff(dr):
+        return Cutoff(off_val=off_val, dist_rate=dr, cut_norm_func=cut_norm_func, keep_cut_amp=keep_cut_amp,
+                      keep_drop_amp=keep_drop_amp, cut_in_test=cut_in_test, epsilon=epsilon)
+
+    return _cutoff
+
+
+def get_default_cutoff(dr):
+    return make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
+                       epsilon=1e-6)(dr)
+
+
+def make_segdropout(anneal=0.1, noise_type='gaussian', keep_amp_type='abs', epsilon=1e-6):
+    def _seg_dropout(dr):
+        return SegDropout(dr, anneal=anneal, noise_type=noise_type, keep_amp_type=keep_amp_type, epsilon=epsilon)
+
+    return _seg_dropout
+
+
+def get_default_segdropout(dr):
+    return make_segdropout(anneal=0.1, noise_type='gaussian')(dr)
+
+
+def add_dense(x, units, bn=True, activation=seu, dropout=0.2, dropout_handler=Dropout):
     x = Dense(units)(x)
     if bn:
         x = BatchNormalization()(x)
     if activation is not None:
         x = Activation(activation)(x)
     if dropout > 0:
-        x = Dropout(dropout)(x)
+        x = dropout_handler(dropout)(x)
     return x
 
 

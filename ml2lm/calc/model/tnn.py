@@ -6,54 +6,61 @@ from ml2lm.calc.model.nn_util import *
 from ml2lm.calc.model.units.rel import *
 
 
+def make_output(activation=None):
+    def _output(flat, name=None):
+        return Dense(1, activation=activation, name=name)(flat)
+
+    return _output
+
+
 def get_linear_output(flat, name=None):
-    return Dense(1, name=name)(flat)
+    return make_output()(flat, name=name)
+
+
+def make_compile_output(loss):
+    def _compile_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
+                        loss_weights=None, init_lr=1e-3):
+        inputs = [cat_input] if cat_input is not None else []
+        if seg_input is not None:
+            inputs.append(seg_input)
+        if num_input is not None:
+            inputs.append(num_input)
+        if other_inputs:
+            inputs.extend(other_inputs)
+
+        dnn = Model(inputs, outputs)
+        dnn.compile(loss=loss, optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
+        return dnn
+
+    return _compile_output
 
 
 def compile_default_mse_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
                                loss_weights=None, init_lr=1e-3):
-    inputs = [cat_input] if cat_input is not None else []
-    if seg_input is not None:
-        inputs.append(seg_input)
-    if num_input is not None:
-        inputs.append(num_input)
-    if other_inputs:
-        inputs.extend(other_inputs)
-
-    dnn = Model(inputs, outputs)
-    dnn.compile(loss='mse', optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
-    return dnn
+    return make_compile_output('mse')(outputs, cat_input, seg_input, num_input, other_inputs, loss_weights, init_lr)
 
 
 def get_sigmoid_output(flat, name=None):
-    return Dense(1, activation='sigmoid', name=name)(flat)
+    return make_output('sigmoid')(flat, name=name)
 
 
 def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_activation=seu,
-                             hidden_dropouts=(0.3, 0.05)):
+                             hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout):
     flat = concatenate([feats, extra_feats]) if feats is not None and extra_feats is not None else \
         feats if feats is not None else extra_feats
     if hidden_units:
         hidden_layer_num = len(hidden_units)
         for i in range(hidden_layer_num):
             flat = add_dense(flat, hidden_units[i], bn=i < hidden_layer_num - 1 or 1 == hidden_layer_num,
-                             activation=hidden_activation, dropout=hidden_dropouts[i])
+                             activation=hidden_activation, dropout=hidden_dropouts[i],
+                             dropout_handler=hidden_dropout_handler)
     return flat
 
 
 def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
                                loss_weights=None, init_lr=1e-3):
-    inputs = [cat_input] if cat_input is not None else []
-    if seg_input is not None:
-        inputs.append(seg_input)
-    if num_input is not None:
-        inputs.append(num_input)
-    if other_inputs:
-        inputs.extend(other_inputs)
-
-    dnn = Model(inputs, outputs)
-    dnn.compile(loss='binary_crossentropy', optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
-    return dnn
+    return make_compile_output('binary_crossentropy')(outputs, cat_input, seg_input, num_input, other_inputs,
+                                                      loss_weights, init_lr)
 
 
 def get_default_rel_conf():
@@ -85,12 +92,13 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
                         rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers,
                         hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False,
                         feat_only_bin=False, pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global',
-                        bundle_scale=False):
+                        bundle_scale=False, embed_dropout_handler=Dropout, seg_dropout_handler=Dropout,
+                        hidden_dropout_handler=Dropout):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
     if embed_dropout > 0:
-        embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
+        embeds = embed_dropout_handler(embed_dropout)(embeds) if embeds is not None else None
 
     splitters = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
                              feat_seg_bin, feat_only_bin, scale_n,
@@ -127,7 +135,7 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
     segments = Multiply()([splitters, estimators]) if splitters is not None and estimators is not None else None
     segments = BatchNormalization()(segments) if segments is not None else None
     if seg_dropout > 0:
-        segments = Dropout(seg_dropout)(segments) if segments is not None else None
+        segments = seg_dropout_handler(seg_dropout)(segments) if segments is not None else None
 
     feats = [embeds] if embeds is not None else []
     if segments is not None:
@@ -147,7 +155,7 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
         feats = get_rel_layer(rel_conf, feats)
 
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
-                           hidden_dropouts=hidden_dropouts)
+                           hidden_dropouts=hidden_dropouts, hidden_dropout_handler=hidden_dropout_handler)
     tnn_block = get_output(flat, name=f'out{block_no}')
 
     if pred_seg_bin:
@@ -173,12 +181,13 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
                   embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
                   get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
                   hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
-                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False):
+                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, embed_dropout_handler=Dropout,
+                  seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
     if embed_dropout > 0:
-        embeds = Dropout(embed_dropout)(embeds) if embeds is not None else None
+        embeds = embed_dropout_handler(embed_dropout)(embeds) if embeds is not None else None
 
     segments = get_segments(seg_input, seg_out_dims, shrink_factor ** block_no, seg_type, seg_func, seg_x_val_range,
                             feat_seg_bin, feat_only_bin, scale_n,
@@ -198,7 +207,7 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
         segments.append(segment)
     segments = BatchNormalization()(concatenate(segments)) if segments else None
     if seg_dropout > 0:
-        segments = Dropout(seg_dropout)(segments) if segments is not None else None
+        segments = seg_dropout_handler(seg_dropout)(segments) if segments is not None else None
 
     feats = [embeds] if embeds is not None else []
     if segments is not None:
@@ -218,7 +227,7 @@ def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_in
         feats = get_rel_layer(rel_conf, feats)
 
     flat = get_last_layers(feats, extra_feats, hidden_units=hidden_units, hidden_activation=hidden_activation,
-                           hidden_dropouts=hidden_dropouts)
+                           hidden_dropouts=hidden_dropouts, hidden_dropout_handler=hidden_dropout_handler)
     tnn_block = get_output(flat, name=f'out{block_no}')
 
     if pred_seg_bin:
@@ -243,7 +252,8 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
                   get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
                   hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
-                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, init_lr=1e-3):
+                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, init_lr=1e-3,
+                  embed_dropout_handler=Dropout, seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
     cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
     seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
     num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
@@ -256,7 +266,8 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
         seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf, get_last_layers=get_last_layers,
         hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts,
         feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred,
-        scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale)
+        scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale, embed_dropout_handler=embed_dropout_handler,
+        seg_dropout_handler=seg_dropout_handler, hidden_dropout_handler=hidden_dropout_handler)
     tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs,
                        init_lr=init_lr)
     return tnn

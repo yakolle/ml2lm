@@ -64,20 +64,21 @@ class SegTriangleLayer(SegLayer):
         left_pos = self.input_val_range[0] + self.seg_width
         right_pos = self.input_val_range[1] - self.seg_width
 
-        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name='left_pos',
+        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name=f'{self.name}/left_pos',
                                         trainable=not self.pos_fixed)
         if self.seg_num > 2:
             middle_pos = np.linspace(left_pos, right_pos, self.seg_num - 1)
-            self.middle_pos = self.add_weight(shape=(self.seg_num - 1,), name='middle_pos',
+            self.middle_pos = self.add_weight(shape=(self.seg_num - 1,), name=f'{self.name}/middle_pos',
                                               initializer=Constant(value=middle_pos), trainable=not self.pos_fixed)
         else:
             self.middle_pos = None
-        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos), name='right_pos',
-                                         trainable=not self.pos_fixed)
+        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
+                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
 
         if self.seg_num > 2 and not self.only_seg_bin:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 1,),
-                                                    initializer=Constant(value=self.seg_width), name='middle_seg_width',
+                                                    initializer=Constant(value=self.seg_width),
+                                                    name=f'{self.name}/middle_seg_width',
                                                     trainable=not self.seg_width_fixed)
         else:
             self.middle_seg_width = None
@@ -187,20 +188,21 @@ class SegRightAngleLayer(SegLayer):
         left_pos = self.input_val_range[0] + self.seg_width
         right_pos = self.input_val_range[1] - self.seg_width
 
-        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name='left_pos',
+        self.left_pos = self.add_weight(shape=(1,), initializer=Constant(value=left_pos), name=f'{self.name}/left_pos',
                                         trainable=not self.pos_fixed)
         if self.seg_num > 2:
             middle_pos = np.linspace(left_pos, right_pos - self.seg_width, self.seg_num - 2)
-            self.middle_pos = self.add_weight(shape=(self.seg_num - 2,), name='middle_pos',
+            self.middle_pos = self.add_weight(shape=(self.seg_num - 2,), name=f'{self.name}/middle_pos',
                                               initializer=Constant(value=middle_pos), trainable=not self.pos_fixed)
         else:
             self.middle_pos = None
-        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos), name='right_pos',
-                                         trainable=not self.pos_fixed)
+        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
+                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
 
         if self.seg_num > 2 and not self.only_seg_bin:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 2,),
-                                                    initializer=Constant(value=self.seg_width), name='middle_seg_width',
+                                                    initializer=Constant(value=self.seg_width),
+                                                    name=f'{self.name}/middle_seg_width',
                                                     trainable=not self.seg_width_fixed)
         else:
             self.middle_seg_width = None
@@ -287,12 +289,13 @@ class WaveletWrapper(SegLayer):
         self.bundle_scale = bundle_scale
 
         Seg = SegRightAngleLayer if seg_type else SegTriangleLayer
-        self.base_seg_layer = Seg(seg_num, **kwargs)
+        self.base_seg_layer = Seg(seg_num, name=f'seg0', **kwargs)
         self.scales = []
-        self.seg_layers = [Seg(Seg.calc_seg_num(Seg.calc_seg_out_num(seg_num) * 2 ** i), **kwargs) for i in
-                           range(1, scale_n + 1)]
-        self.bundled_seg_layers = [Seg(2 ** i, **kwargs) for i in
-                                   range(1, int(np.ceil(np.log2(seg_num))))] if self.bundle_scale else []
+        self.seg_layers = [Seg(Seg.calc_seg_num(Seg.calc_seg_out_num(seg_num) * 2 ** i), name=f'seg{i}', **kwargs)
+                           for i in range(1, scale_n + 1)]
+        bundle_num = int(np.ceil(np.log2(seg_num)))
+        self.bundled_seg_layers = [Seg(2 ** i, name=f'seg-{bundle_num - i}', **kwargs) for i in
+                                   range(1, bundle_num)] if self.bundle_scale else []
 
         self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
@@ -413,40 +416,40 @@ class SegAbsWindowLayer(Layer):
 
         self.left_kernel = self.add_weight(shape=(input_dim, 1),
                                            initializer=self.kernel_initializer,
-                                           name='left_kernel',
+                                           name=f'{self.name}/left_kernel',
                                            regularizer=self.kernel_regularizer,
                                            constraint=self.kernel_constraint)
         if self.seg_num > 2:
             self.middle_kernel = self.add_weight(shape=(input_dim, self.seg_num - 2),
                                                  initializer=self.kernel_initializer,
-                                                 name='middle_kernel',
+                                                 name=f'{self.name}/middle_kernel',
                                                  regularizer=self.kernel_regularizer,
                                                  constraint=self.kernel_constraint)
         else:
             self.middle_kernel = None
         self.right_kernel = self.add_weight(shape=(input_dim, 1),
                                             initializer=self.kernel_initializer,
-                                            name='right_kernel',
+                                            name=f'{self.name}/right_kernel',
                                             regularizer=self.kernel_regularizer,
                                             constraint=self.kernel_constraint)
 
         if self.use_bias:
             self.left_bias = self.add_weight(shape=(1,),
                                              initializer=self.bias_initializer,
-                                             name='left_bias',
+                                             name=f'{self.name}/left_bias',
                                              regularizer=self.bias_regularizer,
                                              constraint=self.bias_constraint)
             if self.seg_num > 2:
                 self.middle_bias = self.add_weight(shape=(self.seg_num - 2,),
                                                    initializer=self.bias_initializer,
-                                                   name='middle_bias',
+                                                   name=f'{self.name}/middle_bias',
                                                    regularizer=self.bias_regularizer,
                                                    constraint=self.bias_constraint)
             else:
                 self.middle_bias = None
             self.right_bias = self.add_weight(shape=(1,),
                                               initializer=self.bias_initializer,
-                                              name='right_bias',
+                                              name=f'{self.name}/right_bias',
                                               regularizer=self.bias_regularizer,
                                               constraint=self.bias_constraint)
         else:
@@ -457,7 +460,7 @@ class SegAbsWindowLayer(Layer):
         if self.seg_num > 2:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 2,),
                                                     initializer=self.seg_width_initializer,
-                                                    name='middle_seg_width',
+                                                    name=f'{self.name}/middle_seg_width',
                                                     regularizer=self.seg_width_regularizer,
                                                     constraint=self.seg_width_constraint)
         else:
@@ -466,7 +469,7 @@ class SegAbsWindowLayer(Layer):
         if self.seg_num > 2:
             self.middle_seg_height = self.add_weight(shape=(self.seg_num - 2,),
                                                      initializer=self.seg_height_initializer,
-                                                     name='middle_seg_height',
+                                                     name=f'{self.name}/middle_seg_height',
                                                      regularizer=self.seg_height_regularizer,
                                                      constraint=self.seg_height_constraint)
         else:
@@ -583,40 +586,40 @@ class SegSquareWindowLayer(Layer):
 
         self.left_kernel = self.add_weight(shape=(input_dim, 1),
                                            initializer=self.kernel_initializer,
-                                           name='left_kernel',
+                                           name=f'{self.name}/left_kernel',
                                            regularizer=self.kernel_regularizer,
                                            constraint=self.kernel_constraint)
         if self.seg_num > 2:
             self.middle_kernel = self.add_weight(shape=(input_dim, self.seg_num - 2),
                                                  initializer=self.kernel_initializer,
-                                                 name='middle_kernel',
+                                                 name=f'{self.name}/middle_kernel',
                                                  regularizer=self.kernel_regularizer,
                                                  constraint=self.kernel_constraint)
         else:
             self.middle_kernel = None
         self.right_kernel = self.add_weight(shape=(input_dim, 1),
                                             initializer=self.kernel_initializer,
-                                            name='right_kernel',
+                                            name=f'{self.name}/right_kernel',
                                             regularizer=self.kernel_regularizer,
                                             constraint=self.kernel_constraint)
 
         if self.use_bias:
             self.left_bias = self.add_weight(shape=(1,),
                                              initializer=self.bias_initializer,
-                                             name='left_bias',
+                                             name=f'{self.name}/left_bias',
                                              regularizer=self.bias_regularizer,
                                              constraint=self.bias_constraint)
             if self.seg_num > 2:
                 self.middle_bias = self.add_weight(shape=(self.seg_num - 2,),
                                                    initializer=self.bias_initializer,
-                                                   name='middle_bias',
+                                                   name=f'{self.name}/middle_bias',
                                                    regularizer=self.bias_regularizer,
                                                    constraint=self.bias_constraint)
             else:
                 self.middle_bias = None
             self.right_bias = self.add_weight(shape=(1,),
                                               initializer=self.bias_initializer,
-                                              name='right_bias',
+                                              name=f'{self.name}/right_bias',
                                               regularizer=self.bias_regularizer,
                                               constraint=self.bias_constraint)
         else:
@@ -627,7 +630,7 @@ class SegSquareWindowLayer(Layer):
         if self.seg_num > 2:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 2,),
                                                     initializer=self.seg_width_initializer,
-                                                    name='middle_seg_width',
+                                                    name=f'{self.name}/middle_seg_width',
                                                     regularizer=self.seg_width_regularizer,
                                                     constraint=self.seg_width_constraint)
         else:
@@ -636,7 +639,7 @@ class SegSquareWindowLayer(Layer):
         if self.seg_num > 2:
             self.middle_seg_height = self.add_weight(shape=(self.seg_num - 2,),
                                                      initializer=self.seg_height_initializer,
-                                                     name='middle_seg_height',
+                                                     name=f'{self.name}/middle_seg_height',
                                                      regularizer=self.seg_height_regularizer,
                                                      constraint=self.seg_height_constraint)
         else:

@@ -84,15 +84,17 @@ def get_default_cutoff(dr):
                        epsilon=1e-6)(dr)
 
 
-def make_segdropout(anneal=0.1, noise_type='gaussian', keep_amp_type='abs', epsilon=1e-6):
+def make_segdropout(anneal=0.1, agg_method='mean', smooth_rate=0., noise_type='gaussian', keep_amp_type='abs',
+                    epsilon=1e-6):
     def _seg_dropout(dr):
-        return SegDropout(dr, anneal=anneal, noise_type=noise_type, keep_amp_type=keep_amp_type, epsilon=epsilon)
+        return SegDropout(dr, anneal=anneal, agg_method=agg_method, smooth_rate=smooth_rate, noise_type=noise_type,
+                          keep_amp_type=keep_amp_type, epsilon=epsilon)
 
     return _seg_dropout
 
 
 def get_default_segdropout(dr):
-    return make_segdropout(anneal=0.1, noise_type='gaussian')(dr)
+    return make_segdropout(anneal=0.1, agg_method='mean', noise_type='gaussian')(dr)
 
 
 def add_dense(x, units, bn=True, activation=seu, dropout=0.2, dropout_handler=Dropout):

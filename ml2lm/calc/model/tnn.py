@@ -64,9 +64,9 @@ def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_inpu
 
 
 def get_default_rel_conf():
-    return [{'rel_id': 'fm', 'dropout': 0.4,
+    return [{'rel_id': 'fm', 'dropout': 0.4, 'dropout_handler': Dropout,
              'conf': {'factor_rank': 320, 'dist_func': lrelu, 'rel_types': 'd', 'exclude_selves': (False,)}},
-            {'rel_id': 'br', 'dropout': 0.8,
+            {'rel_id': 'br', 'dropout': 0.8, 'dropout_handler': Dropout,
              'conf': {'factor_rank': 320, 'trans_func': lrelu, 'op_func': rel_mul, 'rel_types': 'd'}}]
 
 
@@ -79,7 +79,7 @@ def get_rel_layer(rel_conf, feats):
             rel = BiRelLayer(**dict(conf['conf']))(feats)
         dropout = conf['dropout']
         if dropout > 0:
-            rel = Dropout(dropout)(rel)
+            rel = conf.get('dropout_handler', Dropout)(dropout)(rel)
         rels.append(rel)
     return concatenate([feats] + rels)
 

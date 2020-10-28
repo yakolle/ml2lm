@@ -151,12 +151,14 @@ class PeriodDropout(Dropout, AdjustableLayer):
 
 
 class SegDropout(Dropout, AdjustableLayer):
-    def __init__(self, rate, anneal=0.1, noise_type='gaussian', keep_amp_type='abs', epsilon=1e-6, period=None,
-                 axis=None, seed=None, **kwargs):
+    def __init__(self, rate, anneal=0.1, agg_method='mean', smooth_rate=0., noise_type='gaussian', keep_amp_type='abs',
+                 epsilon=1e-6, period=None, axis=None, seed=None, **kwargs):
         super(SegDropout, self).__init__(rate, seed=seed, **kwargs)
         self.supports_masking = True
 
         self.anneal = 0.5 + anneal
+        self.agg_method = agg_method
+        self.smooth_rate = max(min(smooth_rate, 1.), 0.)
         self.noise_type = noise_type
         self.keep_amp_type = keep_amp_type
         self.epsilon = epsilon
@@ -184,10 +186,21 @@ class SegDropout(Dropout, AdjustableLayer):
                 noise_shape = bk.shape(inputs)
 
             def dropped_inputs():
-                x_mean = bk.mean(inputs, axis=0)
-                x_min, x_max = bk.min(x_mean), bk.max(x_mean)
-                x_mean_int = bk.cast(input_shape[-1] * (x_mean - x_min) / (x_max - x_min), 'int32')
-                y, idx, counts = tf.unique_with_counts(x_mean_int)
+                if 'max' == self.agg_method:
+                    x_agg = bk.max(inputs, axis=0)
+                    if self.smooth_rate > 0:
+                        x_agg = self.smooth_rate * bk.mean(inputs, axis=0) + (1 - self.smooth_rate) * x_agg
+                elif 'extreme' == self.agg_method:
+                    x_mean = bk.mean(inputs, axis=0)
+                    x_agg = tf.where(x_mean >= 0, bk.max(inputs, axis=0), bk.min(inputs, axis=0))
+                    if self.smooth_rate > 0:
+                        x_agg = self.smooth_rate * x_mean + (1 - self.smooth_rate) * x_agg
+                else:
+                    x_agg = bk.mean(inputs, axis=0)
+
+                x_min, x_max = bk.min(x_agg), bk.max(x_agg)
+                x_agg_int = bk.cast(input_shape[-1] * (x_agg - x_min) / (x_max - x_min), 'int32')
+                y, idx, counts = tf.unique_with_counts(x_agg_int)
                 dr = self.rate ** (1. / (self.anneal * bk.cast(counts, inputs.dtype)))
                 dr = tf.where(1 == counts, self.rate * bk.ones_like(dr), dr)
 
@@ -216,6 +229,8 @@ class SegDropout(Dropout, AdjustableLayer):
     def get_config(self):
         config = {
             'anneal': self.anneal,
+            'agg_method': self.agg_method,
+            'smooth_rate': self.smooth_rate,
             'noise_type': self.noise_type,
             'keep_amp_type': self.keep_amp_type,
             'epsilon': self.epsilon,

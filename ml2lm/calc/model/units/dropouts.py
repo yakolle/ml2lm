@@ -200,14 +200,23 @@ class SegDropout(Dropout, AdjustableLayer):
 
                 x_min, x_max = bk.min(x_agg), bk.max(x_agg)
                 x_agg_int = bk.cast(input_shape[-1] * (x_agg - x_min) / (x_max - x_min), 'int32')
-                y, idx, counts = tf.unique_with_counts(x_agg_int)
-                dr = self.rate ** (1. / (self.anneal * bk.cast(counts, inputs.dtype)))
-                dr = tf.where(1 == counts, self.rate * bk.ones_like(dr), dr)
+                try:
+                    _, idx, counts = tf.unique_with_counts(x_agg_int)
+                    dr = self.rate ** (1. / (self.anneal * bk.cast(counts, inputs.dtype)))
+                    dr = tf.where(1 == counts, self.rate * bk.ones_like(dr), dr)
+                except Exception as e:
+                    def _seg_dr(ele):
+                        _cnt = bk.sum(bk.cast(ele == x_agg_int, inputs.dtype))
+                        _dr = self.rate if 1 == _cnt else self.rate ** (1. / (self.anneal * _cnt))
+                        return _dr
+
+                    dr = bk.map_fn(_seg_dr, x_agg_int, dtype=inputs.dtype)
+                    idx = bk.arange(0, x_agg_int.shape[0])
 
                 if 'gaussian' == self.noise_type:
                     sigma = (dr / (1. - dr)) ** .5
-                    return inputs * bk.map_fn(lambda i: bk.random_normal((1,), 1., sigma[i], dtype=inputs.dtype)[0],
-                                              idx, dtype=inputs.dtype)
+                    noise_tensor = bk.gather(sigma, idx) * bk.random_normal(x_agg_int.shape, dtype=inputs.dtype) + 1.
+                    return inputs * noise_tensor
                 else:
                     dr_tensor = bk.random_uniform(noise_shape, seed=self.seed, dtype=inputs.dtype)
                     ret = inputs * bk.cast(dr_tensor >= bk.gather(dr, idx), inputs.dtype)

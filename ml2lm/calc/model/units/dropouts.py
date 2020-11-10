@@ -168,6 +168,13 @@ class SegDropout(Dropout, AdjustableLayer):
 
         self.call_cnt = 0
 
+        self.unique_supported = True
+        try:
+            from tensorflow.python.tpu import tpu
+            self.unique_supported = not tpu.is_tpu_strategy(tf.distribute.get_strategy())
+        except ModuleNotFoundError:
+            self.unique_supported = True
+
     def adjust(self):
         self.seed += 1
 
@@ -200,11 +207,11 @@ class SegDropout(Dropout, AdjustableLayer):
 
                 x_min, x_max = bk.min(x_agg), bk.max(x_agg)
                 x_agg_int = bk.cast(input_shape[-1] * (x_agg - x_min) / (x_max - x_min), 'int32')
-                try:
+                if self.unique_supported:
                     _, idx, counts = tf.unique_with_counts(x_agg_int)
                     dr = self.rate ** (1. / (self.anneal * bk.cast(counts, inputs.dtype)))
                     dr = tf.where(1 == counts, self.rate * bk.ones_like(dr), dr)
-                except Exception as e:
+                else:
                     def _seg_dr(ele):
                         _cnt = bk.sum(bk.cast(ele == x_agg_int, inputs.dtype))
                         _dr = self.rate if 1 == _cnt else self.rate ** (1. / (self.anneal * _cnt))

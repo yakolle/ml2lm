@@ -270,9 +270,9 @@ class TnnGenerator(object):
                  add_cat_src=False, seg_type=0, seg_x_val_range=(0, 1), seg_func=seu, feat_seg_bin=False,
                  feat_only_bin=False, scale_n=0, scope_type='global', bundle_scale=False, seg_dropout=0.1,
                  seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True, seg_num_flag=True,
-                 num_segs=None, rel_conf=None, rel_bn_num_flag=False, hidden_units=(320, 64), hidden_activation=seu,
-                 hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout, hid_bn_num_flag=False,
-                 output_activation=None, loss='mse', init_lr=1e-3):
+                 num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False, hidden_units=(320, 64),
+                 hidden_activation=seu, hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout,
+                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
@@ -301,6 +301,7 @@ class TnnGenerator(object):
 
         self.rel_conf = rel_conf
         self.rel_bn_num_flag = rel_bn_num_flag
+        self.rel_embed_src_flag = rel_embed_src_flag
 
         self.hidden_units = hidden_units
         self.hidden_activation = hidden_activation
@@ -381,7 +382,13 @@ class TnnGenerator(object):
     def _get_rel_feats(self):
         rel_feats = []
         if self._embed is not None:
-            rel_feats.append(self._embed)
+            if self.rel_embed_src_flag:
+                embed = self._embed_src
+                if self.embed_dropout > 0:
+                    embed = self.embed_dropout_handler(self.embed_dropout)(embed)
+                rel_feats.append(embed)
+            else:
+                rel_feats.append(self._embed)
         if self._seg is not None:
             rel_feats.append(self._seg)
         if self._num_src is not None:

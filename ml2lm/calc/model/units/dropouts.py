@@ -1,12 +1,8 @@
 import tensorflow as tf
 from keras import backend as bk
-from keras.engine import Layer
 from keras.layers import Dropout
 
-
-class AdjustableLayer(Layer):
-    def adjust(self):
-        pass
+from ml2lm.calc.model.units.activations import AdjustableLayer
 
 
 def cut_norm_max(inputs):

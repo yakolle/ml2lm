@@ -272,3 +272,30 @@ class BiRelLayer(Layer):
         }
         base_config = super(BiRelLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class ShadowLayer(Layer):
+    def __init__(self, trans_func=lsm, **kwargs):
+        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
+            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+        super(ShadowLayer, self).__init__(**kwargs)
+        self.supports_masking = True
+
+        self.trans_func = trans_func
+
+        self.input_spec = InputSpec(min_ndim=2)
+
+    def call(self, inputs, **kwargs):
+        return bk.concatenate([inputs, self.trans_func(bk.stop_gradient(inputs))])
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and 2 == len(input_shape)
+        assert input_shape[-1]
+        output_shape = list(input_shape)
+        output_shape[-1] *= 2
+        return tuple(output_shape)
+
+    def get_config(self):
+        config = {'trans_func': self.trans_func}
+        base_config = super(ShadowLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))

@@ -3,7 +3,6 @@ from keras.engine import InputLayer
 from keras.layers import Add
 
 from ml2lm.calc.model.tnn import *
-from ml2lm.calc.model.units.callbacks import CVAccelerator
 
 
 def simple_train(tnn_model, tx, ty, vx=None, vy=None, epochs=300, batch_size=1024, model_save_dir='.', model_id='rtnn',
@@ -34,38 +33,31 @@ def get_rtnn_models(x, ignore_inputs=None, num_round=20, res_shrinkage=0.1, shif
         res_shrinkage = [res_shrinkage] * (num_round - 1)
     if isinstance(shift_val, float):
         shift_val = [shift_val] * (num_round - 1)
-    cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
-    seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
-    num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
+    inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
     extra_inputs = []
 
     rtnns = []
     for i in range(num_round):
-        has_cat, has_seg, has_num = True, True, True
         if ignore_inputs is not None:
-            has_cat = 'cats' not in ignore_inputs[i]
-            has_seg = 'segs' not in ignore_inputs[i]
-            has_num = 'nums' not in ignore_inputs[i]
+            for data_tag in ignore_inputs:
+                inputs.pop(data_tag)
 
         tnn, extra_inputs = get_tnn_block(
-            i, get_output=get_output, cat_input=cat_input if has_cat else None,
-            seg_input=seg_input if has_seg else None, num_input=num_input if has_num else None, cat_in_dims=cat_in_dims,
-            cat_out_dims=cat_out_dims, seg_out_dims=seg_out_dims, num_segs=num_segs, seg_type=seg_type,
-            seg_x_val_range=seg_x_val_range, seg_flag=seg_flag, add_seg_src=add_seg_src, seg_num_flag=seg_num_flag, x=x,
-            extra_inputs=extra_inputs, get_extra_layers=get_extra_layers, embed_dropout=embed_dropout,
-            seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf, get_last_layers=get_last_layers,
-            hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts,
-            feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred,
-            scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale,
-            embed_dropout_handler=embed_dropout_handler, seg_dropout_handler=seg_dropout_handler,
-            hidden_dropout_handler=hidden_dropout_handler)
+            i, inputs, get_output=get_output, cat_in_dims=cat_in_dims, cat_out_dims=cat_out_dims,
+            seg_out_dims=seg_out_dims, num_segs=num_segs, seg_type=seg_type, seg_x_val_range=seg_x_val_range,
+            seg_flag=seg_flag, add_seg_src=add_seg_src, seg_num_flag=seg_num_flag, x=x, extra_inputs=extra_inputs,
+            get_extra_layers=get_extra_layers, embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout,
+            rel_conf=rel_conf, get_last_layers=get_last_layers, hidden_units=hidden_units,
+            hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts, feat_seg_bin=feat_seg_bin,
+            feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred, scale_n=scale_n,
+            scope_type=scope_type, bundle_scale=bundle_scale, embed_dropout_handler=embed_dropout_handler,
+            seg_dropout_handler=seg_dropout_handler, hidden_dropout_handler=hidden_dropout_handler)
         if i > 0:
             rp_input = Input(shape=[1], name='rp')
             tnn = Add()([tnn, Lambda(lambda ele: res_shrinkage[i - 1] * (ele - shift_val[i - 1]))(rp_input)])
             extra_inputs.append(rp_input)
 
-        tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
-                           other_inputs=extra_inputs, init_lr=init_lr)
+        tnn = compile_func(inputs, tnn, extra_inputs=extra_inputs, init_lr=init_lr)
         rtnns.append(tnn)
     return rtnns
 

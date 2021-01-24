@@ -86,3 +86,8 @@ def make_plseu(alpha):
 
 def plseu(x):
     return make_plseu(3.0)(x)
+
+
+class AdjustableLayer(Layer):
+    def adjust(self):
+        pass

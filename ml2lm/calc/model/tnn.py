@@ -3,6 +3,7 @@ from keras.layers import concatenate, Multiply
 from keras.optimizers import Adam
 
 from ml2lm.calc.model.nn_util import *
+from ml2lm.calc.model.units.embed import *
 from ml2lm.calc.model.units.rel import *
 
 
@@ -18,15 +19,10 @@ def get_linear_output(flat, name=None):
 
 
 def make_compile_output(loss):
-    def _compile_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
-                        loss_weights=None, init_lr=1e-3):
-        inputs = [cat_input] if cat_input is not None else []
-        if seg_input is not None:
-            inputs.append(seg_input)
-        if num_input is not None:
-            inputs.append(num_input)
-        if other_inputs:
-            inputs.extend(other_inputs)
+    def _compile_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
+        inputs = list(inputs.values())
+        if extra_inputs:
+            inputs.extend(extra_inputs)
 
         dnn = Model(inputs, outputs)
         dnn.compile(loss=loss, optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
@@ -35,9 +31,8 @@ def make_compile_output(loss):
     return _compile_output
 
 
-def compile_default_mse_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
-                               loss_weights=None, init_lr=1e-3):
-    return make_compile_output('mse')(outputs, cat_input, seg_input, num_input, other_inputs, loss_weights, init_lr)
+def compile_default_mse_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
+    return make_compile_output('mse')(inputs, outputs, extra_inputs, loss_weights, init_lr)
 
 
 def get_sigmoid_output(flat, name=None):
@@ -57,10 +52,8 @@ def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_
     return flat
 
 
-def compile_default_bce_output(outputs, cat_input=None, seg_input=None, num_input=None, other_inputs=None,
-                               loss_weights=None, init_lr=1e-3):
-    return make_compile_output('binary_crossentropy')(outputs, cat_input, seg_input, num_input, other_inputs,
-                                                      loss_weights, init_lr)
+def compile_default_bce_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
+    return make_compile_output('binary_crossentropy')(inputs, outputs, extra_inputs, loss_weights, init_lr)
 
 
 def get_default_rel_conf():
@@ -84,16 +77,17 @@ def get_rel_layer(rel_conf, feats):
     return concatenate([feats] + rels)
 
 
-def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_input=None, num_input=None,
-                        pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None,
-                        seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=100, shrink_factor=1.0,
-                        seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None,
-                        get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
-                        rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers,
-                        hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False,
-                        feat_only_bin=False, pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global',
-                        bundle_scale=False, embed_dropout_handler=Dropout, seg_dropout_handler=Dropout,
-                        hidden_dropout_handler=Dropout):
+def get_seish_tnn_block(block_no, inputs, get_output=get_linear_output, pre_output=None, cat_in_dims=None,
+                        cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0, seg_x_val_range=(0, 1),
+                        seg_y_val_range=(0, 1), seg_y_dim=100, shrink_factor=1.0, seg_flag=True, add_seg_src=True,
+                        seg_num_flag=True, x=None, extra_inputs=None, get_extra_layers=None, embed_dropout=0.2,
+                        seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
+                        get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
+                        hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
+                        add_pred=False, scale_n=0, scope_type='global', bundle_scale=False,
+                        embed_dropout_handler=Dropout, seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
+    cat_input, seg_input, num_input = inputs.get('cats'), inputs.get('segs'), inputs.get('nums')
+
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
@@ -174,15 +168,16 @@ def get_seish_tnn_block(block_no, get_output=get_linear_output, cat_input=None, 
     return tnn_block, extra_inputs
 
 
-def get_tnn_block(block_no, get_output=get_linear_output, cat_input=None, seg_input=None, num_input=None,
-                  pre_output=None, cat_in_dims=None, cat_out_dims=None, seg_out_dims=None, num_segs=None, seg_type=0,
-                  seg_x_val_range=(0, 1), seg_y_val_range=(0, 1), seg_y_dim=50, shrink_factor=1.0, seg_flag=True,
-                  add_seg_src=True, seg_num_flag=True, x=None, extra_inputs=None, get_extra_layers=None,
-                  embed_dropout=0.2, seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
-                  get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
-                  hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
-                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, embed_dropout_handler=Dropout,
-                  seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
+def get_tnn_block(block_no, inputs, get_output=get_linear_output, pre_output=None, cat_in_dims=None, cat_out_dims=None,
+                  seg_out_dims=None, num_segs=None, seg_type=0, seg_x_val_range=(0, 1), seg_y_val_range=(0, 1),
+                  seg_y_dim=50, shrink_factor=1.0, seg_flag=True, add_seg_src=True, seg_num_flag=True, x=None,
+                  extra_inputs=None, get_extra_layers=None, embed_dropout=0.2, seg_func=seu, seg_dropout=0.1,
+                  rel_conf=get_default_rel_conf(), get_last_layers=get_default_dense_layers, hidden_units=(320, 64),
+                  hidden_activation=seu, hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False,
+                  pred_seg_bin=False, add_pred=False, scale_n=0, scope_type='global', bundle_scale=False,
+                  embed_dropout_handler=Dropout, seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
+    cat_input, seg_input, num_input = inputs.get('cats'), inputs.get('segs'), inputs.get('nums')
+
     embeds = get_embeds(cat_input, cat_in_dims, cat_out_dims,
                         shrink_factor=shrink_factor ** block_no) if cat_input is not None else []
     embeds = BatchNormalization()(concatenate(embeds)) if embeds else None
@@ -254,20 +249,287 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
                   add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, init_lr=1e-3,
                   embed_dropout_handler=Dropout, seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
-    cat_input = Input(shape=[x['cats'].shape[1]], name='cats') if 'cats' in x else None
-    seg_input = Input(shape=[x['segs'].shape[1]], name='segs') if 'segs' in x else None
-    num_input = Input(shape=[x['nums'].shape[1]], name='nums') if 'nums' in x else None
+    inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
     tnn, extra_inputs = get_tnn_block(
-        0, get_output=get_output, cat_input=cat_input, seg_input=seg_input, num_input=num_input,
-        cat_in_dims=cat_in_dims, cat_out_dims=cat_out_dims, seg_out_dims=seg_out_dims, num_segs=num_segs,
-        seg_type=seg_type, seg_x_val_range=seg_x_val_range, seg_flag=seg_flag, add_seg_src=add_seg_src,
-        seg_num_flag=seg_num_flag, x=x, get_extra_layers=get_extra_layers, embed_dropout=embed_dropout,
-        seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf, get_last_layers=get_last_layers,
-        hidden_units=hidden_units, hidden_activation=hidden_activation, hidden_dropouts=hidden_dropouts,
-        feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin, pred_seg_bin=pred_seg_bin, add_pred=add_pred,
-        scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale, embed_dropout_handler=embed_dropout_handler,
-        seg_dropout_handler=seg_dropout_handler, hidden_dropout_handler=hidden_dropout_handler)
-    tnn = compile_func(tnn, cat_input=cat_input, seg_input=seg_input, num_input=num_input, other_inputs=extra_inputs,
-                       init_lr=init_lr)
+        0, inputs, get_output=get_output, cat_in_dims=cat_in_dims, cat_out_dims=cat_out_dims, seg_out_dims=seg_out_dims,
+        num_segs=num_segs, seg_type=seg_type, seg_x_val_range=seg_x_val_range, seg_flag=seg_flag,
+        add_seg_src=add_seg_src, seg_num_flag=seg_num_flag, x=x, get_extra_layers=get_extra_layers,
+        embed_dropout=embed_dropout, seg_func=seg_func, seg_dropout=seg_dropout, rel_conf=rel_conf,
+        get_last_layers=get_last_layers, hidden_units=hidden_units, hidden_activation=hidden_activation,
+        hidden_dropouts=hidden_dropouts, feat_seg_bin=feat_seg_bin, feat_only_bin=feat_only_bin,
+        pred_seg_bin=pred_seg_bin, add_pred=add_pred, scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale,
+        embed_dropout_handler=embed_dropout_handler, seg_dropout_handler=seg_dropout_handler,
+        hidden_dropout_handler=hidden_dropout_handler)
+    tnn = compile_func(inputs, tnn, extra_inputs=extra_inputs, init_lr=init_lr)
     return tnn
+
+
+class TnnGenerator(object):
+    def __init__(self, x, cat_in_dims=None, cat_out_dims=None, embed_dropout=0.2, embed_dropout_handler=Dropout,
+                 add_cat_src=False, seg_type=0, seg_x_val_range=(0, 1), seg_func=seu, feat_seg_bin=False,
+                 feat_only_bin=False, scale_n=0, scope_type='global', bundle_scale=False, seg_dropout=0.1,
+                 seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True, seg_num_flag=True,
+                 num_segs=None, rel_conf=None, rel_bn_num_flag=False, hidden_units=(320, 64), hidden_activation=seu,
+                 hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout, hid_bn_num_flag=False,
+                 output_activation=None, loss='mse', init_lr=1e-3):
+        self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
+
+        self.cat_in_dims = cat_in_dims
+        self.cat_out_dims = cat_out_dims
+        self.embed_dropout = embed_dropout
+        self.embed_dropout_handler = embed_dropout_handler
+        self.add_cat_src = add_cat_src
+
+        self.seg_type = seg_type
+        self.seg_x_val_range = seg_x_val_range
+        self.seg_func = seg_func
+        self.feat_seg_bin = feat_seg_bin
+        self.feat_only_bin = feat_only_bin
+        self.scale_n = scale_n
+        self.scope_type = scope_type
+        self.bundle_scale = bundle_scale
+        self.seg_dropout = seg_dropout
+        self.seg_dropout_handler = seg_dropout_handler
+
+        self.seg_flag = seg_flag
+        self.seg_out_dims = seg_out_dims
+        self.add_seg_src = add_seg_src
+
+        self.seg_num_flag = seg_num_flag
+        self.num_segs = num_segs
+
+        self.rel_conf = rel_conf
+        self.rel_bn_num_flag = rel_bn_num_flag
+
+        self.hidden_units = hidden_units
+        self.hidden_activation = hidden_activation
+        self.hidden_dropouts = hidden_dropouts
+        self.hidden_dropout_handler = hidden_dropout_handler
+        self.hid_bn_num_flag = hid_bn_num_flag
+
+        self.output_activation = output_activation
+        self.loss = loss
+        self.init_lr = init_lr
+
+        self._embed_src = None
+        self._embed = None
+        self._seg_src = None
+        self._seg = None
+        self._cat_src = None
+        self._num_src = None
+        self._rel_outputs = None
+        self._hid_output = None
+        self._output = None
+
+    def _build_embed(self):
+        cat_input = self.inputs.get('cats')
+        if cat_input is not None:
+            self._embed_src = concatenate(get_embeds(cat_input, self.cat_in_dims, self.cat_out_dims))
+
+            self._embed = BatchNormalization()(self._embed_src)
+            if self.embed_dropout > 0:
+                self._embed = self.embed_dropout_handler(self.embed_dropout)(self._embed)
+
+    def _build_seg(self):
+        seg_input, num_input = self.inputs.get('segs'), self.inputs.get('nums')
+        segments = get_segments(seg_input, self.seg_out_dims, seg_type=self.seg_type, seg_func=self.seg_func,
+                                seg_input_val_range=self.seg_x_val_range, seg_bin=self.feat_seg_bin,
+                                only_bin=self.feat_only_bin, scale_n=self.scale_n, scope_type=self.scope_type,
+                                bundle_scale=self.bundle_scale) if self.seg_flag and seg_input is not None else[]
+        segments += get_segments(num_input, self.num_segs, seg_type=self.seg_type, seg_func=self.seg_func,
+                                 seg_input_val_range=self.seg_x_val_range, seg_bin=self.feat_seg_bin,
+                                 only_bin=self.feat_only_bin, scale_n=self.scale_n, scope_type=self.scope_type,
+                                 bundle_scale=self.bundle_scale) if self.seg_num_flag and num_input is not None else []
+        self._seg_src = concatenate(segments) if segments else None
+
+        self._seg = BatchNormalization()(self._seg_src) if self._seg_src is not None else None
+        if self.seg_dropout > 0:
+            self._seg = self.seg_dropout_handler(self.seg_dropout)(self._seg) if segments is not None else None
+
+    def _build_cat(self):
+        cat_input = self.inputs.get('cats')
+        if cat_input is not None and self.add_cat_src:
+            self._cat_src = cat_input
+
+    @staticmethod
+    def _merge(feats):
+        return concatenate(feats) if len(feats) > 1 else feats[0] if feats else None
+
+    def _build_num(self):
+        seg_input, num_input = self.inputs.get('segs'), self.inputs.get('nums')
+        nums = []
+        if seg_input is not None and (self.add_seg_src or not self.seg_flag):
+            nums.append(seg_input)
+        if num_input is not None:
+            nums.append(num_input)
+        self._num_src = self._merge(nums)
+
+    def _get_rels(self, rel_feats):
+        rels = []
+        for conf in self.rel_conf:
+            if 'fm' == conf['rel_id']:
+                rel = FMLayer(**dict(conf['conf']))(rel_feats)
+            else:
+                rel = BiRelLayer(**dict(conf['conf']))(rel_feats)
+            dropout = conf['dropout']
+            if dropout > 0:
+                rel = conf.get('dropout_handler', Dropout)(dropout)(rel)
+                rels.append(rel)
+        return rels
+
+    def _get_rel_feats(self):
+        rel_feats = []
+        if self._embed is not None:
+            rel_feats.append(self._embed)
+        if self._seg is not None:
+            rel_feats.append(self._seg)
+        if self._num_src is not None:
+            rel_feats.append(BatchNormalization(self._num_src) if self.rel_bn_num_flag else self._num_src)
+        return rel_feats
+
+    def _build_rel_block(self):
+        rel_feats = self._merge(self._get_rel_feats())
+        if self.rel_conf and rel_feats is not None:
+            self._rel_outputs = self._get_rels(rel_feats)
+
+    def __add_dense(self, feats, i):
+        hidden_layer_num = len(self.hidden_units)
+        feats = Dense(self.hidden_units[i])(feats)
+        if i < hidden_layer_num - 1 or 1 == hidden_layer_num:
+            feats = BatchNormalization()(feats)
+        if self.hidden_activation is not None:
+            feats = Activation(self.hidden_activation)(feats)
+        if self.hidden_dropouts[i] > 0:
+            dp_handler = self.hidden_dropout_handler if i < hidden_layer_num - 1 or 1 == hidden_layer_num else Dropout
+            feats = dp_handler(self.hidden_dropouts[i])(feats)
+        return feats
+
+    def _get_hid_feats(self):
+        hid_feats = []
+        if self._embed is not None:
+            hid_feats.append(self._embed)
+        if self._seg is not None:
+            hid_feats.append(self._seg)
+        if self._cat_src is not None:
+            hid_feats.append(BatchNormalization()(self._cat_src))
+        if self._num_src:
+            hid_feats.append(BatchNormalization(self._num_src) if self.hid_bn_num_flag else self._num_src)
+        if self._rel_outputs:
+            hid_feats += self._rel_outputs
+        return hid_feats
+
+    def _build_hid_block(self):
+        hid_feats = self._merge(self._get_hid_feats())
+        if self.hidden_units is not None and hid_feats is not None:
+            hidden_layer_num = len(self.hidden_units)
+            for i in range(hidden_layer_num):
+                hid_feats = self.__add_dense(hid_feats, i)
+            self._hid_output = hid_feats
+
+    def _build_output(self):
+        self._output = Dense(1, activation=self.output_activation, name='out')(self._hid_output)
+
+    def _build_model(self, need_compile=True):
+        tnn = Model(list(self.inputs.values()), self._output)
+        if need_compile:
+            tnn.compile(loss=self.loss, optimizer=Adam(lr=self.init_lr))
+        return tnn
+
+    def _build_tnn_block(self):
+        self._build_embed()
+        self._build_seg()
+        self._build_cat()
+        self._build_num()
+        self._build_rel_block()
+        self._build_hid_block()
+        self._build_output()
+
+    def get_tnn_model(self, need_compile=True):
+        self._build_tnn_block()
+        return self._build_model(need_compile)
+
+
+class TnnWithTEGenerator(TnnGenerator):
+    def __init__(self, te_cat_conf=None, bn_te_cat_flag=True, te_cat_dp=0., ie_te_cat_flag=False, te_num_conf=None,
+                 bn_te_num_flag=True, te_num_dp=0., ie_te_num_flag=False, **kwargs):
+        super(TnnWithTEGenerator, self).__init__(**kwargs)
+
+        self.te_cat_conf = te_cat_conf
+        self.bn_te_cat_flag = bn_te_cat_flag
+        self.te_cat_dp = min(max(te_cat_dp, 0.), 1.)
+        self.ie_te_cat_flag = ie_te_cat_flag
+
+        self.te_num_conf = te_num_conf
+        self.bn_te_num_flag = bn_te_num_flag
+        self.te_num_dp = min(max(te_num_dp, 0.), 1.)
+        self.ie_te_num_flag = ie_te_num_flag
+
+        self._te_cat = None
+        self._te_num = None
+
+    def _build_te_cat(self):
+        if self._cat_src is not None and self.te_cat_conf is not None:
+            target_input = self.inputs['target']
+            te = TargetEmbedding(**self.te_cat_conf)
+            self._te_cat = te([self._cat_src, target_input])
+
+            if self.bn_te_cat_flag:
+                self._te_cat = BatchNormalization()(self._te_cat)
+            if self.te_cat_dp > 0:
+                self._te_cat = Dropout(self.te_cat_dp)(self._te_cat)
+
+    def _build_te_num(self):
+        if self._num_src is not None and self.te_num_conf is not None:
+            target_input = self.inputs['target']
+            te = TargetEmbedding(**self.te_num_conf)
+            self._te_num = te([self._num_src, target_input])
+
+            if self.bn_te_num_flag:
+                self._te_num = BatchNormalization()(self._te_num)
+            if self.te_num_dp > 0:
+                self._te_num = Dropout(self.te_num_dp)(self._te_num)
+
+    def _build_rel_block(self):
+        rel_feats = self._get_rel_feats()
+        if self._te_cat is not None:
+            rel_feats.append(self._te_cat)
+        if self._te_num is not None:
+            rel_feats.append(self._te_num)
+
+        rel_feats = self._merge(self._get_rel_feats())
+        if self.rel_conf and rel_feats is not None:
+            self._rel_outputs = self._get_rels(rel_feats)
+
+    def _build_hid_block(self):
+        hid_feats = self._get_hid_feats()
+        if self._te_cat is not None:
+            hid_feats.append(self._te_cat)
+        if self._te_num is not None:
+            hid_feats.append(self._te_num)
+        hid_feats = self._merge(hid_feats)
+
+        if self.hidden_units is not None and hid_feats is not None:
+            hidden_layer_num = len(self.hidden_units)
+            for i in range(hidden_layer_num):
+                hid_feats = self.__add_dense(hid_feats, i)
+            self._hid_output = hid_feats
+
+    def _build_output(self):
+        feats = [self._hid_output]
+        if self._te_cat is not None and self.ie_te_cat_flag:
+            feats.append(self._te_cat)
+        if self._te_num is not None and self.ie_te_num_flag:
+            feats.append(self._te_num)
+        self._output = Dense(1, activation=self.output_activation, name='out')(self._merge(feats))
+
+    def _build_tnn_block(self):
+        self._build_embed()
+        self._build_seg()
+        self._build_cat()
+        self._build_num()
+        self._build_te_cat()
+        self._build_te_num()
+        self._build_rel_block()
+        self._build_hid_block()
+        self._build_output()

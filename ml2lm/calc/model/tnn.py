@@ -503,8 +503,8 @@ class TnnWithTEGenerator(TnnGenerator):
             rel_feats.append(self._te_cat)
         if self._te_num is not None:
             rel_feats.append(self._te_num)
+        rel_feats = self._merge(rel_feats)
 
-        rel_feats = self._merge(self._get_rel_feats())
         if self.rel_conf and rel_feats is not None:
             self._rel_outputs = self._get_rels(rel_feats)
 

@@ -168,3 +168,20 @@ class TargetEmbedding(AdjustableLayer):
         output_shape = list(input_shape[0])
         output_shape[-1] *= (2 - self.embed_only)
         return tuple(output_shape)
+
+
+class TargetEmbedding4CPU(TargetEmbedding):
+    def _ungather(self, val, seg_indices):
+        return tf.sparse.to_dense(tf.sparse.reorder(
+            tf.SparseTensor(bk.expand_dims(bk.cast(seg_indices, 'int64'), -1), val, self.embedding.shape)))
+
+    def _sum_seg_embeddings(self, seg_indices, seg_embeddings):
+        def __merge(ret, ele):
+            _tmp_embedding, _tmp_cnt = ret
+            _seg_ind, _seg_embedding = ele
+            return _tmp_embedding + self._ungather(_seg_embedding, _seg_ind), _tmp_cnt + self._ungather(
+                bk.ones_like(_seg_embedding, dtype=_tmp_cnt.dtype), _seg_ind)
+
+        tmp_embedding = bk.zeros_like(self.embedding)
+        tmp_cnt = bk.zeros_like(self.embedding, dtype='int32')
+        return bk.foldl(__merge, (seg_indices, seg_embeddings), initializer=(tmp_embedding, tmp_cnt))

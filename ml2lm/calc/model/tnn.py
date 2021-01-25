@@ -459,7 +459,7 @@ class TnnGenerator(object):
 
 class TnnWithTEGenerator(TnnGenerator):
     def __init__(self, te_cat_conf=None, bn_te_cat_flag=True, te_cat_dp=0., ie_te_cat_flag=False, te_num_conf=None,
-                 bn_te_num_flag=True, te_num_dp=0., ie_te_num_flag=False, **kwargs):
+                 bn_te_num_flag=True, te_num_dp=0., ie_te_num_flag=False, worker_type=None, **kwargs):
         super(TnnWithTEGenerator, self).__init__(**kwargs)
 
         self.te_cat_conf = te_cat_conf
@@ -472,13 +472,14 @@ class TnnWithTEGenerator(TnnGenerator):
         self.te_num_dp = min(max(te_num_dp, 0.), 1.)
         self.ie_te_num_flag = ie_te_num_flag
 
+        self.TE = TargetEmbedding4CPU if 'cpu' == worker_type else TargetEmbedding
         self._te_cat = None
         self._te_num = None
 
     def _build_te_cat(self):
         if self._cat_src is not None and self.te_cat_conf is not None:
             target_input = self.inputs['target']
-            te = TargetEmbedding(**self.te_cat_conf)
+            te = self.TE(**self.te_cat_conf)
             self._te_cat = te([self._cat_src, target_input])
 
             if self.bn_te_cat_flag:
@@ -489,7 +490,7 @@ class TnnWithTEGenerator(TnnGenerator):
     def _build_te_num(self):
         if self._num_src is not None and self.te_num_conf is not None:
             target_input = self.inputs['target']
-            te = TargetEmbedding(**self.te_num_conf)
+            te = self.TE(**self.te_num_conf)
             self._te_num = te([self._num_src, target_input])
 
             if self.bn_te_num_flag:

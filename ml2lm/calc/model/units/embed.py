@@ -37,8 +37,7 @@ class TargetEmbedding(AdjustableLayer):
 
         ele_num = self.input_dim * (self.seg_num + self.mask_zero)
         self.embedding = self.add_weight(shape=(ele_num,), name='embedding', initializer='zeros', trainable=False)
-        self.update_cnt = self.add_weight(shape=(ele_num,), name='update_cnt', initializer='zeros', trainable=False,
-                                          dtype='int32')
+        self.update_cnt = self.add_weight(shape=(ele_num,), name='update_cnt', initializer='zeros', trainable=False)
 
         self.cur_min = self.add_weight(shape=(self.input_dim,), name='cur_min', initializer='zeros', trainable=False)
         self.cur_max = self.add_weight(shape=(self.input_dim,), name='cur_max', initializer='ones', trainable=False)
@@ -46,7 +45,7 @@ class TargetEmbedding(AdjustableLayer):
                                           trainable=False)
         self.moving_max = self.add_weight(shape=(self.input_dim,), name='moving_max', initializer='ones',
                                           trainable=False)
-        self.call_cnt = self.add_weight(shape=(), name='call_cnt', initializer='zeros', trainable=False, dtype='int32')
+        self.call_cnt = self.add_weight(shape=(), name='call_cnt', initializer='zeros', trainable=False)
 
         self.built = True
 
@@ -67,7 +66,7 @@ class TargetEmbedding(AdjustableLayer):
 
     def _sum_seg_embeddings(self, seg_indices, seg_embeddings):
         return bk.sum(self._ungather(seg_indices, seg_embeddings), axis=0), bk.sum(
-            self._ungather(seg_indices, bk.ones_like(seg_embeddings, dtype='int32')), axis=0)
+            self._ungather(seg_indices, bk.ones_like(seg_embeddings)), axis=0)
 
     def _pave_embedding(self, _embedding):
         def __pave(i):
@@ -99,7 +98,7 @@ class TargetEmbedding(AdjustableLayer):
         seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
         tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, y)
 
-        bk.update(self.embedding, tmp_embedding / (bk.cast(tmp_cnt, dtype) + bk.cast(0 == tmp_cnt, dtype=dtype)))
+        bk.update(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
         unmatched_mask = bk.cast(0 == self.embedding, dtype)
         bk.update_add(self.embedding, self._pave_embedding(self.embedding) * unmatched_mask)
 
@@ -110,6 +109,7 @@ class TargetEmbedding(AdjustableLayer):
     def call(self, inputs, training=None):
         if training is None:
             training = bk.learning_phase()
+        training = bk.get_value(training)
 
         (x, y), dtype = inputs, self.embedding.dtype
         if training:
@@ -130,8 +130,7 @@ class TargetEmbedding(AdjustableLayer):
             delta_embeddings = (1 - self.target_momentum) * (y - seg_embeddings)
             tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, delta_embeddings)
 
-            bk.update_add(self.embedding,
-                          tmp_embedding / (bk.cast(tmp_cnt, dtype=dtype) + bk.cast(0 == tmp_cnt, dtype=dtype)))
+            bk.update_add(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
             bk.update_add(self.update_cnt, tmp_cnt)
 
             if self.mask_zero:
@@ -180,8 +179,8 @@ class TargetEmbedding4CPU(TargetEmbedding):
             _tmp_embedding, _tmp_cnt = ret
             _seg_ind, _seg_embedding = ele
             return _tmp_embedding + self._ungather(_seg_embedding, _seg_ind), _tmp_cnt + self._ungather(
-                bk.ones_like(_seg_embedding, dtype=_tmp_cnt.dtype), _seg_ind)
+                bk.ones_like(_seg_embedding), _seg_ind)
 
         tmp_embedding = bk.zeros_like(self.embedding)
-        tmp_cnt = bk.zeros_like(self.embedding, dtype='int32')
+        tmp_cnt = bk.zeros_like(self.embedding)
         return bk.foldl(__merge, (seg_indices, seg_embeddings), initializer=(tmp_embedding, tmp_cnt))

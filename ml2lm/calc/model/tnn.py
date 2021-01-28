@@ -19,20 +19,20 @@ def get_linear_output(flat, name=None):
 
 
 def make_compile_output(loss):
-    def _compile_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
+    def _compile_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3, metrics=None):
         inputs = list(inputs.values())
         if extra_inputs:
             inputs.extend(extra_inputs)
 
         dnn = Model(inputs, outputs)
-        dnn.compile(loss=loss, optimizer=Adam(lr=init_lr), loss_weights=loss_weights)
+        dnn.compile(loss=loss, optimizer=Adam(lr=init_lr), metrics=metrics, loss_weights=loss_weights)
         return dnn
 
     return _compile_output
 
 
-def compile_default_mse_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
-    return make_compile_output('mse')(inputs, outputs, extra_inputs, loss_weights, init_lr)
+def compile_default_mse_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3, metrics=None):
+    return make_compile_output('mse')(inputs, outputs, extra_inputs, loss_weights, init_lr, metrics)
 
 
 def get_sigmoid_output(flat, name=None):
@@ -52,8 +52,8 @@ def get_default_dense_layers(feats, extra_feats, hidden_units=(320, 64), hidden_
     return flat
 
 
-def compile_default_bce_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3):
-    return make_compile_output('binary_crossentropy')(inputs, outputs, extra_inputs, loss_weights, init_lr)
+def compile_default_bce_output(inputs, outputs, extra_inputs=None, loss_weights=None, init_lr=1e-3, metrics=None):
+    return make_compile_output('binary_crossentropy')(inputs, outputs, extra_inputs, loss_weights, init_lr, metrics)
 
 
 def get_default_rel_conf():
@@ -247,7 +247,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
                   seg_func=seu, seg_dropout=0.1, rel_conf=get_default_rel_conf(),
                   get_last_layers=get_default_dense_layers, hidden_units=(320, 64), hidden_activation=seu,
                   hidden_dropouts=(0.3, 0.05), feat_seg_bin=False, feat_only_bin=False, pred_seg_bin=False,
-                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, init_lr=1e-3,
+                  add_pred=False, scale_n=0, scope_type='global', bundle_scale=False, init_lr=1e-3, metrics=None,
                   embed_dropout_handler=Dropout, seg_dropout_handler=Dropout, hidden_dropout_handler=Dropout):
     inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
@@ -261,7 +261,7 @@ def get_tnn_model(x, get_output=get_linear_output, compile_func=compile_default_
         pred_seg_bin=pred_seg_bin, add_pred=add_pred, scale_n=scale_n, scope_type=scope_type, bundle_scale=bundle_scale,
         embed_dropout_handler=embed_dropout_handler, seg_dropout_handler=seg_dropout_handler,
         hidden_dropout_handler=hidden_dropout_handler)
-    tnn = compile_func(inputs, tnn, extra_inputs=extra_inputs, init_lr=init_lr)
+    tnn = compile_func(inputs, tnn, extra_inputs=extra_inputs, init_lr=init_lr, metrics=metrics)
     return tnn
 
 
@@ -272,7 +272,7 @@ class TnnGenerator(object):
                  seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True, seg_num_flag=True,
                  num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False, hidden_units=(320, 64),
                  hidden_activation=seu, hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout,
-                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3):
+                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3, metrics=None):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
@@ -312,6 +312,7 @@ class TnnGenerator(object):
         self.output_activation = output_activation
         self.loss = loss
         self.init_lr = init_lr
+        self.metrics = metrics
 
         self._embed_src = None
         self._embed = None
@@ -440,7 +441,7 @@ class TnnGenerator(object):
     def _build_model(self, need_compile=True):
         tnn = Model(list(self.inputs.values()), self._output)
         if need_compile:
-            tnn.compile(loss=self.loss, optimizer=Adam(lr=self.init_lr))
+            tnn.compile(loss=self.loss, optimizer=Adam(lr=self.init_lr), metrics=self.metrics)
         return tnn
 
     def _build_tnn_block(self):

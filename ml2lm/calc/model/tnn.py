@@ -421,7 +421,7 @@ class TnnGenerator(object):
             hid_feats.append(self._seg)
         if self._cat_src is not None:
             hid_feats.append(BatchNormalization()(self._cat_src))
-        if self._num_src:
+        if self._num_src is not None:
             hid_feats.append(BatchNormalization(self._num_src) if self.hid_bn_num_flag else self._num_src)
         if self._rel_outputs:
             hid_feats += self._rel_outputs

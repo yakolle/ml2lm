@@ -25,24 +25,24 @@ class DummyLayer(Layer):
         super(DummyLayer, self).__init__(**kwargs)
         self.supports_masking = True
 
-        self.forwrd_type = 'zero'
+        self.forward_type = 'zero'
         self.backward_type = 'stop'
 
     def dummy(self):
-        self.forwrd_type = 'zero'
+        self.forward_type = 'zero'
         self.backward_type = 'stop'
 
     def freeze(self):
-        self.forwrd_type = 'one'
+        self.forward_type = 'one'
         self.backward_type = 'stop'
 
     def normal(self):
-        self.forwrd_type = 'one'
+        self.forward_type = 'one'
         self.backward_type = 'normal'
 
     def call(self, inputs, training=None):
         output = inputs
-        if 'zero' == self.forwrd_type:
+        if 'zero' == self.forward_type:
             output = bk.zeros_like(output)
         if 'stop' == self.backward_type:
             output = bk.stop_gradient(output)

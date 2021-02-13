@@ -393,7 +393,7 @@ class TnnGenerator(object):
         if self._seg is not None:
             rel_feats.append(self._seg)
         if self._num_src is not None:
-            rel_feats.append(BatchNormalization(self._num_src) if self.rel_bn_num_flag else self._num_src)
+            rel_feats.append(BatchNormalization()(self._num_src) if self.rel_bn_num_flag else self._num_src)
         return rel_feats
 
     def _build_rel_block(self):
@@ -422,7 +422,7 @@ class TnnGenerator(object):
         if self._cat_src is not None:
             hid_feats.append(BatchNormalization()(self._cat_src))
         if self._num_src is not None:
-            hid_feats.append(BatchNormalization(self._num_src) if self.hid_bn_num_flag else self._num_src)
+            hid_feats.append(BatchNormalization()(self._num_src) if self.hid_bn_num_flag else self._num_src)
         if self._rel_outputs:
             hid_feats += self._rel_outputs
         return hid_feats

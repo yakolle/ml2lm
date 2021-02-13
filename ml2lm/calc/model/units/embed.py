@@ -1,7 +1,7 @@
 import tensorflow as tf
 from keras import backend as bk
 
-from ml2lm.calc.model.units.activations import AdjustableLayer
+from ml2lm.calc.model.units.gadget import AdjustableLayer
 
 
 class TargetEmbedding(AdjustableLayer):

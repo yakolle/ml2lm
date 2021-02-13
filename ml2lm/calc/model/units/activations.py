@@ -1,8 +1,10 @@
 import keras.backend as bk
+import tensorflow as tf
 from keras import initializers, regularizers, constraints
-from keras.constraints import Constraint
 from keras.engine import Layer, InputSpec
 from keras.initializers import Constant
+
+from ml2lm.calc.model.units.gadget import MinMaxValue
 
 
 def seu(x):
@@ -20,18 +22,6 @@ def make_lseu(c_val):
 
 def lseu(x):
     return make_lseu(9.0)(x)
-
-
-class MinMaxValue(Constraint):
-    def __init__(self, min_value=1e-3, max_value=None):
-        self.min_value = min_value
-        self.max_value = max_value
-
-    def __call__(self, w):
-        return bk.clip(w, self.min_value, self.max_value)
-
-    def get_config(self):
-        return {'min_value': self.min_value, 'max_value': self.max_value}
 
 
 class PLSEU(Layer):
@@ -88,6 +78,61 @@ def plseu(x):
     return make_plseu(3.0)(x)
 
 
-class AdjustableLayer(Layer):
-    def adjust(self):
-        pass
+@tf.custom_gradient
+def out_of_flow_sigmoid(logits):
+    pred = bk.sigmoid(logits)
+
+    def _grad(dy):
+        return dy
+
+    return pred, _grad
+
+
+def calc_section_mask(x, sections):
+    mask = False
+    for l, r in sections:
+        mask |= ((x >= l) & (x < r))
+    return mask
+
+
+def make_seg_sigmoid(scale=200, round_type='ceil', gradient_type='sm', pos_p_sections=None, neg_p_sections=None,
+                     threshold=0.5):
+    @tf.custom_gradient
+    def _seg_sigmoid(logits):
+        pos_handler, neg_handler = (tf.math.ceil, tf.math.floor) if 'ceil' == round_type else (
+            tf.math.floor, tf.math.ceil)
+        pred = bk.sigmoid(logits)
+
+        pos_mask = pred >= threshold
+        pos_mask_c = (pos_mask & calc_section_mask(pred, pos_p_sections)) if pos_p_sections is not None else None
+        pos_mask_nc = (pos_mask & ~pos_mask_c) if pos_mask_c is not None else None
+        neg_mask = pred < threshold
+        neg_mask_c = (neg_mask & calc_section_mask(pred, neg_p_sections)) if neg_p_sections is not None else None
+        neg_mask_nc = (neg_mask & ~neg_mask_c) if neg_mask_c is not None else None
+
+        s_pred = pred * scale
+        if pos_mask_c is None:
+            pred_pos = pos_handler(bk.cast(pos_mask, logits.dtype) * s_pred) / scale
+        else:
+            pred_pos_c = pos_handler(bk.cast(pos_mask_c, logits.dtype) * s_pred) / scale
+            pred_pos_nc = bk.cast(pos_mask_nc, logits.dtype) * pred
+            pred_pos = pred_pos_c + pred_pos_nc
+        if neg_mask_c is None:
+            pred_neg = neg_handler(bk.cast(neg_mask, logits.dtype) * s_pred) / scale
+        else:
+            pred_neg_c = neg_handler(bk.cast(neg_mask_c, logits.dtype) * s_pred) / scale
+            pred_neg_nc = bk.cast(neg_mask_nc, logits.dtype) * pred
+            pred_neg = pred_neg_c + pred_neg_nc
+        s_pred = pred_pos + pred_neg
+
+        def __grad(dy):
+            grad = 1.
+            if 'sm' == gradient_type:
+                grad = pred * (1. - pred)
+            elif 'ssm' == gradient_type:
+                grad = s_pred * (1. - s_pred)
+            return dy * grad
+
+        return s_pred, __grad
+
+    return _seg_sigmoid

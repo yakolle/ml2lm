@@ -155,14 +155,14 @@ def rel_div(epsilon=1e-3):
     return _rel_div
 
 
-class BiRelLayer(Layer):
+class BiCrossLayer(Layer):
     def __init__(self, factor_rank, trans_func=bk.relu, op_func=rel_mul, rel_types='d', use_bias=True,
                  kernel_initializer='glorot_uniform', bias_initializer='zeros', kernel_regularizer=None,
                  bias_regularizer=None, activity_regularizer=None, kernel_constraint=None, bias_constraint=None,
                  **kwargs):
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
             kwargs['input_shape'] = (kwargs.pop('input_dim'),)
-        super(BiRelLayer, self).__init__(**kwargs)
+        super(BiCrossLayer, self).__init__(**kwargs)
         self.supports_masking = True
 
         self.factor_rank = factor_rank
@@ -193,11 +193,10 @@ class BiRelLayer(Layer):
                                regularizer=self.bias_regularizer, constraint=self.bias_constraint)
 
     def build(self, input_shape):
-        assert len(input_shape) >= 2
-        input_dim = input_shape[-1]
+        input_dim1, input_dim2 = input_shape[0][-1], input_shape[1][-1]
 
         if 'v' in self.rel_types:
-            self.rel_map['v'] = (self._add_kernel(input_dim, 'val_rel1'), self._add_kernel(input_dim, 'val_rel2'))
+            self.rel_map['v'] = (self._add_kernel(input_dim1, 'val_rel1'), self._add_kernel(input_dim2, 'val_rel2'))
             if self.use_bias:
                 self.bias_map['v'] = (self._add_bias('val_bias1'), self._add_bias('val_bias2'))
             else:
@@ -206,7 +205,7 @@ class BiRelLayer(Layer):
             self.rel_map['v'] = self.bias_map['v'] = None
 
         if 'd' in self.rel_types:
-            self.rel_map['d'] = (self._add_kernel(input_dim, 'dist_rel1'), self._add_kernel(input_dim, 'dist_rel2'))
+            self.rel_map['d'] = (self._add_kernel(input_dim1, 'dist_rel1'), self._add_kernel(input_dim2, 'dist_rel2'))
             if self.use_bias:
                 self.bias_map['d'] = (self._add_bias('dist_bias1'), self._add_bias('dist_bias2'))
             else:
@@ -215,7 +214,7 @@ class BiRelLayer(Layer):
             self.rel_map['d'] = self.bias_map['d'] = None
 
         if 'e' in self.rel_types:
-            self.rel_map['e'] = (self._add_kernel(input_dim, 'ent_rel1'), self._add_kernel(input_dim, 'ent_rel2'))
+            self.rel_map['e'] = (self._add_kernel(input_dim1, 'ent_rel1'), self._add_kernel(input_dim2, 'ent_rel2'))
             if self.use_bias:
                 self.bias_map['e'] = (self._add_bias('ent_bias1'), self._add_bias('ent_bias2'))
             else:
@@ -223,17 +222,16 @@ class BiRelLayer(Layer):
         else:
             self.rel_map['e'] = self.bias_map['e'] = None
 
-        self.input_spec = InputSpec(min_ndim=2, axes={-1: input_dim})
         self.built = True
 
     def _call(self, rel_type, inputs):
         kernel1, kernel2 = self.rel_map[rel_type]
 
-        inputs1 = inputs2 = inputs
+        inputs1, inputs2 = inputs
         if 'd' == rel_type:
-            inputs1 = inputs2 = self.trans_func(inputs)
+            inputs1, inputs2 = self.trans_func(inputs1), self.trans_func(inputs2)
         elif 'e' == rel_type:
-            inputs2 = self.trans_func(inputs)
+            inputs2 = self.trans_func(inputs2)
 
         if self.use_bias:
             bias1, bias2 = self.bias_map[rel_type]
@@ -249,9 +247,7 @@ class BiRelLayer(Layer):
         return bk.concatenate(outputs) if len(outputs) > 1 else outputs[0]
 
     def compute_output_shape(self, input_shape):
-        assert input_shape and 2 == len(input_shape)
-        assert input_shape[-1]
-        output_shape = list(input_shape)
+        output_shape = list(input_shape[0])
         output_shape[-1] = self.factor_rank * len(self.rel_types)
         return tuple(output_shape)
 
@@ -270,8 +266,19 @@ class BiRelLayer(Layer):
             'kernel_constraint': constraints.serialize(self.kernel_constraint),
             'bias_constraint': constraints.serialize(self.bias_constraint)
         }
-        base_config = super(BiRelLayer, self).get_config()
+        base_config = super(BiCrossLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+class BiRelLayer(BiCrossLayer):
+    def build(self, input_shape):
+        super(BiRelLayer, self).build([input_shape, input_shape])
+
+    def call(self, inputs, **kwargs):
+        return super(BiRelLayer, self).call([inputs, inputs], **kwargs)
+
+    def compute_output_shape(self, input_shape):
+        return super(BiRelLayer, self).compute_output_shape([input_shape, input_shape])
 
 
 class ShadowLayer(Layer):

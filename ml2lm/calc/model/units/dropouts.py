@@ -101,6 +101,20 @@ class Cutoff(AdjustableLayer):
         return input_shape
 
 
+def make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
+                epsilon=1e-6):
+    def _cutoff(dr):
+        return Cutoff(off_val=off_val, dist_rate=dr, cut_norm_func=cut_norm_func, keep_cut_amp=keep_cut_amp,
+                      keep_drop_amp=keep_drop_amp, cut_in_test=cut_in_test, epsilon=epsilon)
+
+    return _cutoff
+
+
+def get_default_cutoff(dr):
+    return make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
+                       epsilon=1e-6)(dr)
+
+
 class PeriodDropout(Dropout, AdjustableLayer):
     def __init__(self, rate, period=10, axis=None, seed=0, **kwargs):
         super(PeriodDropout, self).__init__(rate, seed=seed, **kwargs)
@@ -254,3 +268,80 @@ class SegDropout(Dropout, AdjustableLayer):
 
     def compute_output_shape(self, input_shape):
         return input_shape
+
+
+def make_segdropout(anneal=0.1, agg_method='mean', smooth_rate=0., noise_type='gaussian', keep_amp_type='abs',
+                    epsilon=1e-6):
+    def _seg_dropout(dr):
+        return SegDropout(dr, anneal=anneal, agg_method=agg_method, smooth_rate=smooth_rate, noise_type=noise_type,
+                          keep_amp_type=keep_amp_type, epsilon=epsilon)
+
+    return _seg_dropout
+
+
+def get_default_segdropout(dr):
+    return make_segdropout(anneal=0.1, agg_method='mean', noise_type='gaussian')(dr)
+
+
+class UniformNoise(Dropout, AdjustableLayer):
+    def __init__(self, rate, dist_scope='entry', period=None, axis=None, **kwargs):
+        super(UniformNoise, self).__init__(rate, **kwargs)
+        self.supports_masking = True
+
+        self.rate = max(rate, 0.)
+        self.dist_scope = dist_scope
+        self.period = period
+        self.axis = axis
+
+        if 'entry' == self.dist_scope:
+            self.min_val = 1. - self.rate
+            self.max_val = 1. + self.rate
+        else:
+            self.max_val = self.rate
+            self.min_val = -self.max_val
+
+        self.call_cnt = 0
+
+    def adjust(self):
+        self.seed += 1
+
+    def call(self, inputs, training=None):
+        self.call_cnt += 1
+        if self.period is not None and not self.call_cnt % self.period:
+            self.adjust()
+
+        if self.rate > 0.:
+            input_shape = bk.int_shape(inputs)
+            if self.axis is not None:
+                noise_shape = [1] * len(input_shape)
+                noise_shape[self.axis] = input_shape[self.axis]
+                noise_shape = tuple(noise_shape)
+            else:
+                noise_shape = bk.shape(inputs)
+
+            def dropped_inputs():
+                noise = bk.random_uniform(shape=noise_shape, minval=self.min_val, maxval=self.max_val,
+                                          dtype=inputs.dtype, seed=self.seed)
+                return (inputs * noise) if 'entry' == self.dist_scope else (inputs + noise)
+
+            return bk.in_train_phase(dropped_inputs, inputs, training=training)
+        return inputs
+
+    def get_config(self):
+        config = {
+            'dist_scope': self.dist_scope,
+            'period': self.period,
+            'axis': self.axis
+        }
+        base_config = super(UniformNoise, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
+def make_uniform_noise(dist_scope='entry'):
+    def _uniform_noise(dr):
+        return UniformNoise(rate=dr, dist_scope=dist_scope)
+
+    return _uniform_noise

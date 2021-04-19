@@ -1,9 +1,9 @@
 import os
 import random
 
-from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Lambda
+from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Lambda, Dropout
 
-from ml2lm.calc.model.units.dropouts import *
+from ml2lm.calc.model.units.rel import *
 from ml2lm.calc.model.units.seg import *
 
 
@@ -70,33 +70,6 @@ def to_tnn_data(x, cat_indices=None, seg_indices=None, num_indices=None):
     return nn_data
 
 
-def make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
-                epsilon=1e-6):
-    def _cutoff(dr):
-        return Cutoff(off_val=off_val, dist_rate=dr, cut_norm_func=cut_norm_func, keep_cut_amp=keep_cut_amp,
-                      keep_drop_amp=keep_drop_amp, cut_in_test=cut_in_test, epsilon=epsilon)
-
-    return _cutoff
-
-
-def get_default_cutoff(dr):
-    return make_cutoff(off_val=1e-4, cut_norm_func=None, keep_cut_amp=False, keep_drop_amp=True, cut_in_test=False,
-                       epsilon=1e-6)(dr)
-
-
-def make_segdropout(anneal=0.1, agg_method='mean', smooth_rate=0., noise_type='gaussian', keep_amp_type='abs',
-                    epsilon=1e-6):
-    def _seg_dropout(dr):
-        return SegDropout(dr, anneal=anneal, agg_method=agg_method, smooth_rate=smooth_rate, noise_type=noise_type,
-                          keep_amp_type=keep_amp_type, epsilon=epsilon)
-
-    return _seg_dropout
-
-
-def get_default_segdropout(dr):
-    return make_segdropout(anneal=0.1, agg_method='mean', noise_type='gaussian')(dr)
-
-
 def add_dense(x, units, bn=True, activation=seu, dropout=0.2, dropout_handler=Dropout):
     x = Dense(units)(x)
     if bn:
@@ -148,3 +121,10 @@ def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_fun
                                              seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
         segments.append(segment)
     return segments
+
+
+def get_default_rel_conf():
+    return [{'rel_id': 'fm', 'dropout': 0.4, 'dropout_handler': Dropout,
+             'conf': {'factor_rank': 320, 'dist_func': lrelu, 'rel_types': 'd', 'exclude_selves': (False,)}},
+            {'rel_id': 'br', 'dropout': 0.8, 'dropout_handler': Dropout,
+             'conf': {'factor_rank': 320, 'trans_func': lrelu, 'op_func': rel_mul, 'rel_types': 'd'}}]

@@ -1,6 +1,6 @@
-from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
+from keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from keras.engine import InputLayer
-from keras.layers import Add
+from keras.layers import Add, Multiply
 
 from ml2lm.calc.model.tnn import *
 

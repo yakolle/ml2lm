@@ -1,9 +1,13 @@
 import time
 import warnings
 
-import numpy as np
-from keras import backend as bk
 from keras.callbacks import Callback, ModelCheckpoint
+from keras.layers import Embedding, Dense
+from sklearn import metrics
+from sklearn.model_selection import ShuffleSplit
+
+from ml2lm.calc.model.units.embed import *
+from ml2lm.calc.model.units.rel import *
 
 
 class CVAccelerator(Callback):
@@ -52,7 +56,10 @@ def calc_score(logs, monitor='loss', monitor_op=np.less):
     t_score = logs.get(monitor)
     v_score = logs.get(f'val_{monitor}')
     if t_score is not None and v_score is not None:
-        score = v_score ** 2 + (1 if monitor_op == np.less else -1) * (t_score - v_score) ** 2
+        if monitor_op != np.less:
+            t_score = 1. - t_score
+            v_score = 1. - v_score
+        score = t_score ** 2 + v_score ** 2
     return score
 
 
@@ -72,15 +79,14 @@ class CheckpointDecorator(ModelCheckpoint):
             if self.save_best_only:
                 current = self.calc_score_func(logs, self.monitor, self.monitor_op)
                 if current is None:
-                    warnings.warn('Can save best model only with %s available, '
-                                  'skipping.' % self.monitor, RuntimeWarning)
+                    warnings.warn(f'Can save best model only with {self.monitor} and val_{self.monitor} available, '
+                                  'skipping.', RuntimeWarning)
                 else:
-                    if self.monitor_op(current, self.best):
+                    if current < self.best:
                         if self.verbose > 0:
-                            print('\nEpoch %05d: %s improved from %0.5f to %0.5f,'
+                            print('\nEpoch %05d: score improved from %0.5f to %0.5f,'
                                   ' saving model to %s'
-                                  % (epoch + 1, self.monitor, self.best,
-                                     current, filepath))
+                                  % (epoch + 1, self.best, current, filepath))
                         self.best = current
                         if self.save_weights_only:
                             self.model.save_weights(filepath, overwrite=True)
@@ -88,8 +94,8 @@ class CheckpointDecorator(ModelCheckpoint):
                             self.model.save(filepath, overwrite=True)
                     else:
                         if self.verbose > 0:
-                            print('\nEpoch %05d: %s did not improve from %0.5f' %
-                                  (epoch + 1, self.monitor, self.best))
+                            print('\nEpoch %05d: score did not improve from %0.5f' %
+                                  (epoch + 1, self.best))
             else:
                 if self.verbose > 0:
                     print('\nEpoch %05d: saving model to %s' % (epoch + 1, filepath))
@@ -233,3 +239,126 @@ class FlipModel(Callback):
             fr = self.train_fr_adjust_func(lr)
             if fr > 0:
                 self._merge(fr)
+
+
+def make_evaluate_handler(metric_handler, metric_bias=0., metric_scale=1.):
+    def _evaluate_handler(ys, ps):
+        scores = [metric_scale * (metric_handler(_y, _p) + metric_bias) for _y, _p in zip(ys, ps)]
+        n = len(scores)
+        if 1 == n:
+            return scores[-1]
+        return np.sum(np.square(scores))
+
+    return _evaluate_handler
+
+
+class WeightResetter(Callback):
+    def __init__(self, ev_data, trigger_lr=1e-4, init_reset_lr=1e-3, reset_threshold=0., reset_times=5,
+                 evaluate_handler=make_evaluate_handler(metrics.roc_auc_score, metric_bias=-1., metric_scale=-1.),
+                 lr_scheduler=None, pred_batch_size=1024, data_size=1 / 10, data_split_seed=0, reset_classes=None):
+        super(WeightResetter, self).__init__()
+
+        self.ev_data = ev_data
+        self.trigger_lr = trigger_lr
+        self.init_reset_lr = init_reset_lr
+        self.reset_threshold = reset_threshold
+        self.reset_times = reset_times
+        self.evaluate_handler = evaluate_handler
+        self.lr_scheduler = lr_scheduler
+        self.pred_batch_size = pred_batch_size
+        self.data_size = data_size
+        self.data_split_seed = data_split_seed
+
+        self.reset_classes = (Embedding, SegEmbedding, FMLayer, BiCrossLayer, Dense)
+        if reset_classes is not None:
+            if isinstance(reset_classes, tuple):
+                self.reset_classes = reset_classes
+            elif isinstance(reset_classes, list):
+                self.reset_classes = tuple(list(self.reset_classes) + reset_classes)
+            else:
+                self.reset_classes = tuple(list(self.reset_classes) + [reset_classes])
+
+        self.weights = []
+        self.resetters = []
+
+        if self.lr_scheduler is not None:
+            if not hasattr(self.lr_scheduler, 'reset'):
+                if hasattr(self.lr_scheduler, '_reset'):
+                    try:
+                        self.lr_scheduler.reset = self.lr_scheduler._reset
+                    except Exception:
+                        self.lr_scheduler.reset = self.lr_scheduler.on_train_begin
+                else:
+                    self.lr_scheduler.reset = self.lr_scheduler.on_train_begin
+
+        self.reset_lr_decay = (self.trigger_lr / self.init_reset_lr) ** (1 / self.reset_times)
+        self.cnt = 0
+
+    def on_train_begin(self, logs=None):
+        for layer in self.model.layers:
+            if isinstance(layer, self.reset_classes):
+                for w in layer.trainable_weights:
+                    if 2 == len(w.shape) and w.shape[-1] > 1:
+                        self.weights.append(w)
+                        if isinstance(layer, (Embedding, SegEmbedding)):
+                            self.resetters.append(layer.embeddings_initializer)
+                        else:
+                            self.resetters.append(layer.kernel_initializer)
+
+    def _calc_score(self, ev_data):
+        return self.evaluate_handler([y for x, y in ev_data], [np.squeeze(self.model.predict(
+            x, batch_size=self.pred_batch_size)) for x, y in ev_data])
+
+    def _update_weights(self, inds, reset=False):
+        ws = [self.weights[i] for i, _ in inds]
+        vs = bk.batch_get_value(ws)
+        vs_bak = vs.copy()
+        for i, (j, k) in enumerate(inds):
+            v = vs[i][:, k]
+            vs[i][:, k] = self.resetters[j](v.shape, dtype=v.dtype) if reset else 0.
+
+        bk.batch_set_value(list(zip(ws, vs)))
+        return ws, vs_bak
+
+    def _sample_ev_data(self):
+        cur_ev_data = self.ev_data
+        if self.data_size is not None and 0. < self.data_size < 1.:
+            cur_ev_data = []
+            for x, y in self.ev_data:
+                cur_seed = (self.data_split_seed + self.cnt) if self.data_split_seed is not None else None
+                aind, bind = next(ShuffleSplit(n_splits=1, test_size=self.data_size, random_state=cur_seed).split(y))
+                if isinstance(x, dict):
+                    cur_ev_data.append(({col: val[bind] for col, val in x.items()}, y[bind]))
+                else:
+                    cur_ev_data.append((x[bind], y[bind]))
+        return cur_ev_data
+
+    def on_epoch_end(self, epoch, logs=None):
+        if self.model.optimizer.lr <= self.trigger_lr and self.cnt < self.reset_times:
+            cur_ev_data = self._sample_ev_data()
+            score = self._calc_score(cur_ev_data)
+            cand_inds = []
+            w_cnts = {}
+            for i, w in enumerate(self.weights):
+                cur_w_cnt = 0
+                for j in range(w.shape[-1]):
+                    cur_inds = [(i, j)]
+                    cur_ws, cur_vs_bak = self._update_weights(cur_inds)
+                    cur_gain = score - self._calc_score(cur_ev_data)
+                    if cur_gain >= self.reset_threshold:
+                        cand_inds += cur_inds
+                        cur_w_cnt += 1
+                    bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))
+                if cur_w_cnt > 0:
+                    w_cnts[w.name] = cur_w_cnt
+
+            if cand_inds:
+                self._update_weights(cand_inds, reset=True)
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.reset()
+            last_lr = bk.get_value(self.model.optimizer.lr)
+            reset_lr = self.init_reset_lr * self.reset_lr_decay ** self.cnt
+            bk.set_value(self.model.optimizer.lr, reset_lr)
+            self.cnt += 1
+            print(f"WeightResetter has been triggered {self.cnt} times, last_lr={last_lr}, reset_lr={reset_lr}. total",
+                  f"{len(cand_inds)} nodes' weight in {len(w_cnts)} kernels resetted. \nKernels' resets: {w_cnts}")

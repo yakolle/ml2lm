@@ -1,10 +1,8 @@
 import numpy as np
-from keras import backend as bk, initializers, regularizers, constraints, activations
-from keras.engine.topology import Layer, InputSpec
-from keras.initializers import Constant
+from keras import activations
 from keras.layers import Dense
 
-from ml2lm.calc.model.units.activations import seu
+from ml2lm.calc.model.units.activations import *
 
 
 class SegLayer(Layer):

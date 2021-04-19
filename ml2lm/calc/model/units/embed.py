@@ -1,5 +1,7 @@
+import numpy as np
 import tensorflow as tf
-from keras import backend as bk
+from keras import backend as bk, initializers, regularizers, constraints
+from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
 
@@ -54,7 +56,8 @@ class TargetEmbedding(AdjustableLayer):
         seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, self.seg_num - 1) + self.mask_zero
         if self.mask_zero:
             seg_indices *= bk.cast(val != 0, 'int32')
-        seg_indices += bk.arange(0, self.input_dim * (self.seg_num + self.mask_zero), self.seg_num + self.mask_zero)
+        seg_num = self.seg_num + self.mask_zero
+        seg_indices += bk.cast(bk.arange(0, self.input_dim * seg_num, seg_num), dtype='int32')
 
         return seg_indices
 
@@ -69,17 +72,15 @@ class TargetEmbedding(AdjustableLayer):
             self._ungather(seg_indices, bk.ones_like(seg_embeddings)), axis=0)
 
     def _pave_embedding(self, _embedding):
-        def __pave(i):
-            if i < start:
-                return _embedding[i::col_num]
-            if i == start:
-                return _embedding[start + 1::col_num]
-            if col_num - 1 == i:
-                return _embedding[col_num - 2::col_num]
-            return (_embedding[i - 1::col_num] + _embedding[i + 1::col_num]) / 2
-
+        dtype = _embedding.dtype
         start, col_num = int(self.mask_zero), self.seg_num + self.mask_zero
-        return bk.flatten(bk.transpose(bk.map_fn(__pave, bk.arange(0, col_num), dtype=_embedding.dtype)))
+        indices = bk.arange(0, self.input_dim * col_num) % col_num
+        _embedding1 = bk.concatenate([_embedding[1:], _embedding[-1:]])
+        _embedding_1 = bk.concatenate([_embedding[0:1], _embedding[:-1]])
+
+        return (bk.cast(indices < start, dtype) * _embedding + bk.cast(indices == start, dtype) * _embedding1
+                + bk.cast(indices == col_num - 1, dtype) * _embedding_1 + bk.cast(
+            (indices > start) & (indices < col_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
 
     def adjust(self):
         dtype = self.embedding.dtype
@@ -184,3 +185,195 @@ class TargetEmbedding4CPU(TargetEmbedding):
         tmp_embedding = bk.zeros_like(self.embedding)
         tmp_cnt = bk.zeros_like(self.embedding)
         return bk.foldl(__merge, (seg_indices, seg_embeddings), initializer=(tmp_embedding, tmp_cnt))
+
+
+class TargetEmbedding4TPU(TargetEmbedding):
+    def _ungather(self, seg_indices, vals):
+        return tf.sparse.to_dense(tf.SparseTensor(bk.cast(bk.reshape(bk.stack(
+            [bk.repeat_elements(bk.expand_dims(bk.arange(0, bk.shape(seg_indices)[0])), seg_indices.shape[1],
+                                axis=-1), seg_indices], axis=-1), (-1, 2)), 'int64'),
+            bk.flatten(vals), [bk.shape(seg_indices)[0]] + list(self.embedding.shape)))
+
+
+def sqrt_out_dim_calcor(seg_nums, max_param_num=None):
+    in_dim = np.prod(seg_nums)
+    out_dim = int(in_dim ** 0.5)
+    param_num = out_dim ** 3
+
+    if max_param_num is not None and param_num > max_param_num:
+        sn_size = len(seg_nums)
+        max_dim = int(max_param_num ** (2 / (3 * sn_size)))
+        seg_nums = np.clip(seg_nums, 0, max_dim)
+        in_dim = np.prod(seg_nums)
+        out_dim = int(in_dim ** 0.5)
+
+    return in_dim, out_dim, seg_nums
+
+
+def log_out_dim_calcor(seg_nums, max_param_num=None):
+    feat_num = len(seg_nums)
+    if 1 == feat_num:
+        return seg_nums[0], max(2, int(seg_nums[0] ** 0.5)), seg_nums
+
+    param_num_l = np.sum(np.log(seg_nums))
+    if max_param_num is not None and param_num_l > np.log(max_param_num):
+        max_dim = int(max_param_num ** (1 / feat_num))
+        seg_nums = np.clip(seg_nums, 0, max_dim)
+
+    in_dim = np.prod(seg_nums)
+    out_dim = feat_num * int(np.log(in_dim))
+    return in_dim, out_dim, seg_nums
+
+
+class SegEmbedding(AdjustableLayer):
+    def __init__(self, seg_nums, feat_idx_list, embed_trainable_list=None, input_val_range=(0., 1.),
+                 out_dim_calcor=log_out_dim_calcor, max_param_num=int(1e6), period=100, pave_momentum=0.5,
+                 embeddings_initializer='uniform', embeddings_regularizer=None, embeddings_constraint=None, **kwargs):
+        super(SegEmbedding, self).__init__(**kwargs)
+        self.supports_masking = True
+
+        self.seg_nums = np.array(seg_nums)
+        self.feat_idx_list = feat_idx_list
+        self.embed_trainable_list = embed_trainable_list
+        self.input_val_range = input_val_range
+        self.out_dim_calcor = out_dim_calcor
+        self.max_param_num = max_param_num
+        self.period = period
+        self.pave_momentum = pave_momentum
+
+        self.embeddings_initializer = initializers.get(embeddings_initializer)
+        self.embeddings_regularizer = regularizers.get(embeddings_regularizer)
+        self.embeddings_constraint = constraints.get(embeddings_constraint)
+
+        self.phase = len(self.feat_idx_list)
+        self.embedding_list = [[] for i in range(self.phase)]
+        if not self.embed_trainable_list:
+            self.embed_trainable_list = [True] * self.phase
+        self.update_cnt_list = [[] for i in range(self.phase)]
+        self.seg_num_list = [[] for i in range(self.phase)]
+        self.seg_num_mul_list = [[] for i in range(self.phase)]
+
+        feats_num = self.seg_nums.shape[0]
+        if isinstance(self.input_val_range[0], (int, float)):
+            self.min_vals = bk.constant([self.input_val_range[0]] * feats_num)
+        else:
+            self.min_vals = bk.constant(self.input_val_range[0])
+        if isinstance(self.input_val_range[1], (int, float)):
+            self.max_vals = bk.constant([self.input_val_range[1]] * feats_num)
+        else:
+            self.max_vals = bk.constant(self.input_val_range[1])
+        self.min_val_list = [[] for i in range(self.phase)]
+        self.max_val_list = [[] for i in range(self.phase)]
+
+        self.call_cnt = None
+
+    def _add_embeddings(self, phase):
+        feats_indices = self.feat_idx_list[phase]
+        for i, feats_idx in enumerate(feats_indices):
+            in_dim, out_dim, seg_nums = self.out_dim_calcor(self.seg_nums[feats_idx], self.max_param_num)
+            self.seg_num_list[phase].append(bk.constant(seg_nums, dtype='int32'))
+            self.seg_num_mul_list[phase].append(
+                bk.expand_dims(bk.constant(np.append(np.cumprod(seg_nums[:0:-1])[::-1], [1]), dtype='int32')))
+            self.min_val_list[phase].append(bk.gather(self.min_vals, feats_idx))
+            self.max_val_list[phase].append(bk.gather(self.max_vals, feats_idx))
+
+            self.embedding_list[phase].append(self.add_weight(
+                shape=(in_dim, out_dim), name=f'seg_embed_{phase}_{i}', initializer=self.embeddings_initializer,
+                regularizer=self.embeddings_regularizer, constraint=self.embeddings_constraint,
+                trainable=self.embed_trainable_list[phase]))
+            self.update_cnt_list[phase].append(self.add_weight(
+                shape=(in_dim,), name=f'se_update_cnt_{phase}_{i}', initializer='zeros', trainable=False))
+
+    def build(self, input_shape):
+        for i in range(self.phase):
+            self._add_embeddings(i)
+        self.call_cnt = self.add_weight(shape=(), name='call_cnt', initializer='zeros', trainable=False)
+        self.built = True
+
+    @staticmethod
+    def _calc_indices(val, min_val, max_val, seg_num, seg_num_mul):
+        seg_scale = (bk.cast(seg_num, val.dtype) - 1.) / (max_val - min_val)
+        seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, seg_num - 1)
+        seg_indices = bk.squeeze(bk.dot(seg_indices, seg_num_mul), -1)
+
+        return seg_indices
+
+    @staticmethod
+    def _pave_embedding(_embedding, row_num):
+        dtype = _embedding.dtype
+        indices = bk.expand_dims(bk.arange(0, _embedding.shape[0])) % row_num
+        _embedding1 = bk.concatenate([_embedding[1:], _embedding[-1:]], axis=0)
+        _embedding_1 = bk.concatenate([_embedding[0:1], _embedding[:-1]], axis=0)
+
+        return (bk.cast(0 == indices, dtype) * _embedding1 + bk.cast(indices == row_num - 1, dtype) * _embedding_1
+                + bk.cast((indices > 0) & (indices < row_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
+
+    def adjust(self):
+        for i in range(self.phase):
+            if self.embed_trainable_list[i]:
+                for j, embedding in enumerate(self.embedding_list[i]):
+                    update_cnt = self.update_cnt_list[i][j]
+                    unchanged_mask = bk.expand_dims(bk.cast(0 == update_cnt, embedding.dtype))
+                    paved_embedding = self._pave_embedding(embedding, self.seg_num_list[i][j][-1]) * unchanged_mask
+                    unpaved_embedding = embedding * unchanged_mask
+
+                    bk.update_add(embedding, (1 - self.pave_momentum) * (paved_embedding - unpaved_embedding))
+                    bk.update(update_cnt, bk.zeros_like(update_cnt))
+
+    def call(self, inputs, training=None):
+        if training is None:
+            training = bk.learning_phase()
+        training = bk.get_value(training)
+
+        indices, outputs = [[] for i in range(self.phase)], []
+        for i in range(self.phase):
+            trainable = self.embed_trainable_list[i]
+            cur_outputs = []
+            for j, feats_idx in enumerate(self.feat_idx_list[i]):
+                inds = self._calc_indices(
+                    bk.transpose(bk.gather(bk.transpose(inputs), feats_idx)), self.min_val_list[i][j],
+                    self.max_val_list[i][j], self.seg_num_list[i][j], self.seg_num_mul_list[i][j])
+                if trainable:
+                    indices[i].append(inds)
+                cur_outputs.append(bk.gather(self.embedding_list[i][j], inds))
+            outputs.append(bk.concatenate(cur_outputs) if len(cur_outputs) > 1 else cur_outputs[0])
+
+        if training:
+            bk.update(self.call_cnt, self.call_cnt + 1)
+
+            for i in range(self.phase):
+                for j, inds in enumerate(indices[i]):
+                    ind, _, cnts = tf.unique_with_counts(bk.flatten(inds))
+
+                    update_cnt = self.update_cnt_list[i][j]
+                    tmp_cnt = tf.sparse.to_dense(tf.sparse.reorder(tf.SparseTensor(bk.expand_dims(
+                        bk.cast(ind, 'int64'), -1), bk.cast(cnts, update_cnt.dtype), update_cnt.shape)))
+                    bk.update_add(update_cnt, tmp_cnt)
+
+            if self.period is not None and self.call_cnt % self.period == 0:
+                self.adjust()
+
+        return outputs
+
+    def get_config(self):
+        config = {
+            'seg_nums': self.seg_nums,
+            'feat_idx_list': self.feat_idx_list,
+            'embed_trainable_list': self.embed_trainable_list,
+            'input_val_range': self.input_val_range,
+            'out_dim_calcor': self.out_dim_calcor,
+            'max_param_num': self.max_param_num,
+            'period': self.period,
+            'pave_momentum': self.pave_momentum,
+            'embeddings_initializer': initializers.serialize(self.embeddings_initializer),
+            'embeddings_regularizer': regularizers.serialize(self.embeddings_regularizer),
+            'embeddings_constraint': constraints.serialize(self.embeddings_constraint)
+        }
+        base_config = super(SegEmbedding, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    def compute_output_shape(self, input_shape):
+        assert input_shape and 2 == len(input_shape)
+        output_shape = [(input_shape[0], bk.sum([embedding.shape[-1] for embedding in self.embedding_list[i]]))
+                        for i in range(self.phase)]
+        return output_shape

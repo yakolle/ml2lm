@@ -179,7 +179,6 @@ class BiCrossLayer(Layer):
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
         self.bias_constraint = constraints.get(bias_constraint)
-        self.input_spec = InputSpec(min_ndim=2)
 
         self.rel_map = {}
         self.bias_map = {}

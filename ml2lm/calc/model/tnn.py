@@ -1,3 +1,5 @@
+import gc
+
 import joblib
 from keras import Input, Model
 from keras.layers import concatenate
@@ -14,7 +16,7 @@ class TnnGenerator(object):
                  seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True, seg_num_flag=True,
                  num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False, hidden_units=(320, 64),
                  hidden_activation=seu, hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout,
-                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3, nn_metrics=None):
+                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3, nn_metrics=None, **kwargs):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
@@ -66,6 +68,16 @@ class TnnGenerator(object):
         self._hid_output = None
         self._output = None
 
+        self._main_generator = None
+        self._generators = []
+
+    def compose(self, generators):
+        for generator in generators:
+            assert isinstance(generator, TnnGenerator)
+            self._generators.append(generator)
+            generator._main_generator = self
+            generator.inputs = self.inputs
+
     def _build_embed(self):
         cat_input = self.inputs.get('cats')
         if cat_input is not None:
@@ -109,6 +121,11 @@ class TnnGenerator(object):
             nums.append(num_input)
         self._num_src = self._merge(nums)
 
+    def _build_extra(self):
+        for generator in self._generators:
+            assert isinstance(generator, TnnGenerator)
+            generator._build_extra()
+
     @staticmethod
     def _get_rels(rel_conf, rel_feats):
         rels = []
@@ -127,6 +144,9 @@ class TnnGenerator(object):
                 rels.append(rel)
         return rels
 
+    def _get_extra_rel_feats(self) -> list:
+        pass
+
     def _get_rel_feats(self):
         rel_feats = []
         if self._embed is not None:
@@ -141,6 +161,13 @@ class TnnGenerator(object):
             rel_feats.append(self._seg)
         if self._num_src is not None:
             rel_feats.append(BatchNormalization()(self._num_src) if self.rel_bn_num_flag else self._num_src)
+
+        for generator in self._generators:
+            assert isinstance(generator, TnnGenerator)
+            extra_rel_feats = generator._get_extra_rel_feats()
+            if not extra_rel_feats:
+                rel_feats += extra_rel_feats
+
         return rel_feats
 
     def _build_rel_block(self):
@@ -160,6 +187,9 @@ class TnnGenerator(object):
             feats = dp_handler(self.hidden_dropouts[i])(feats)
         return feats
 
+    def _get_extra_hid_feats(self) -> list:
+        pass
+
     def _get_hid_feats(self):
         hid_feats = []
         if self._embed is not None:
@@ -172,6 +202,13 @@ class TnnGenerator(object):
             hid_feats.append(BatchNormalization()(self._num_src) if self.hid_bn_num_flag else self._num_src)
         if self._rel_outputs:
             hid_feats += self._rel_outputs
+
+        for generator in self._generators:
+            assert isinstance(generator, TnnGenerator)
+            extra_hid_feats = generator._get_extra_hid_feats()
+            if not extra_hid_feats:
+                hid_feats += extra_hid_feats
+
         return hid_feats
 
     def _build_hid_block(self):
@@ -182,8 +219,17 @@ class TnnGenerator(object):
                 hid_feats = self._add_dense_(hid_feats, i)
             self._hid_output = hid_feats
 
+    def _get_extra_output(self) -> list:
+        pass
+
     def _build_output(self):
-        self._output = Dense(1, activation=self.output_activation, name='out')(self._hid_output)
+        outputs = [self._hid_output]
+        for generator in self._generators:
+            assert isinstance(generator, TnnGenerator)
+            extra_outputs = generator._get_extra_output()
+            if not extra_outputs:
+                outputs += extra_outputs
+        self._output = Dense(1, activation=self.output_activation, name='out')(self._merge(outputs))
 
     def _build_model(self, need_compile=True):
         tnn = Model(list(self.inputs.values()), self._output)
@@ -196,6 +242,7 @@ class TnnGenerator(object):
         self._build_seg()
         self._build_cat()
         self._build_num()
+        self._build_extra()
         self._build_rel_block()
         self._build_hid_block()
         self._build_output()
@@ -249,40 +296,33 @@ class TnnWithTEGenerator(TnnGenerator):
             if self.te_num_dp > 0:
                 self._te_num = self.te_dropout_handler(self.te_num_dp)(self._te_num)
 
-    def _get_rel_feats(self):
-        rel_feats = super(TnnWithTEGenerator, self)._get_rel_feats()
+    def _build_extra(self):
+        self._build_te_cat()
+        self._build_te_num()
+
+    def _get_extra_rel_feats(self):
+        rel_feats = []
         if self._te_cat is not None:
             rel_feats.append(self._te_cat)
         if self._te_num is not None:
             rel_feats.append(self._te_num)
         return rel_feats
 
-    def _get_hid_feats(self):
-        hid_feats = super(TnnWithTEGenerator, self)._get_hid_feats()
+    def _get_extra_hid_feats(self):
+        hid_feats = []
         if self._te_cat is not None:
             hid_feats.append(self._te_cat)
         if self._te_num is not None:
             hid_feats.append(self._te_num)
         return hid_feats
 
-    def _build_output(self):
-        feats = [self._hid_output]
+    def _get_extra_output(self):
+        feats = []
         if self._te_cat is not None and self.ie_te_cat_flag:
             feats.append(self._te_cat)
         if self._te_num is not None and self.ie_te_num_flag:
             feats.append(self._te_num)
-        self._output = Dense(1, activation=self.output_activation, name='out')(self._merge(feats))
-
-    def _build_tnn_block(self):
-        self._build_embed()
-        self._build_seg()
-        self._build_cat()
-        self._build_num()
-        self._build_te_cat()
-        self._build_te_num()
-        self._build_rel_block()
-        self._build_hid_block()
-        self._build_output()
+        return feats
 
 
 class TnnWithSEGenerator(TnnGenerator):
@@ -340,10 +380,10 @@ class TnnWithSEGenerator(TnnGenerator):
 
     def _build_se(self):
         feat_size = len(self.se_feat_idx_list)
-        if feat_size > self.cur_phase:
-            self.se_feat_idx_list = self.se_feat_idx_list[:self.cur_phase]
         if feat_size < self.cur_phase:
             self.se_feat_idx_list = joblib.load(os.path.join(self.ev_path, 'se_feat_idx_list'))
+        if feat_size > self.cur_phase:
+            self.se_feat_idx_list = self.se_feat_idx_list[:self.cur_phase]
 
         inputs = self._merge([self.inputs.get('cats'), self._num_src])
         self.SE = SegEmbedding(seg_nums=self.se_seg_nums, feat_idx_list=self.se_feat_idx_list,
@@ -360,8 +400,11 @@ class TnnWithSEGenerator(TnnGenerator):
             ses.append(se)
         self._se = self._merge(ses)
 
-    def _get_rel_feats(self):
-        rel_feats = super(TnnWithSEGenerator, self)._get_rel_feats()
+    def _build_extra(self):
+        self._build_se()
+
+    def _get_extra_rel_feats(self):
+        rel_feats = []
         if self.rel_embed_src_flag:
             ses = []
             for i, se_src in enumerate(self._se_srcs):
@@ -374,20 +417,8 @@ class TnnWithSEGenerator(TnnGenerator):
             rel_feats.append(self._se)
         return rel_feats
 
-    def _get_hid_feats(self):
-        hid_feats = super(TnnWithSEGenerator, self)._get_hid_feats()
-        hid_feats.append(self._se)
-        return hid_feats
-
-    def _build_tnn_block(self):
-        self._build_embed()
-        self._build_seg()
-        self._build_cat()
-        self._build_num()
-        self._build_se()
-        self._build_rel_block()
-        self._build_hid_block()
-        self._build_output()
+    def _get_extra_hid_feats(self):
+        return [self._se]
 
     def get_tnn_model(self, need_compile=True, model_name=None):
         tnn = super(TnnWithSEGenerator, self).get_tnn_model(need_compile=need_compile)
@@ -428,7 +459,6 @@ class TnnWithSEGenerator(TnnGenerator):
                                   ev_data, co_ev_flag=co_ev_flag, end_time=end_time, pred_batch_size=pred_batch_size)
         if layer is not None:
             lcn = SegEmbedding.__name__
-            
             se_auc_list = joblib.load(f'{lcn}_auc_list')
             se_auc_list[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
                                             se_auc_list[layer.phase - 1]]
@@ -501,9 +531,12 @@ def evaluate_by_phase(model, model_name, ev_path, layer_class, weight_getter, wi
         for i in wids_getter(layer, layer.phase - 1):
             cur_ids = [(layer.phase - 1, i)]
             cur_ws, cur_vs_bak = _update_weights(cur_ids)
-            cur_score = ev_score - _calc_score()
+            cur_score = _calc_score() - ev_score
             score_list[layer.phase - 1].append((cur_ids, cur_score))
             bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))
+            print(f'{score_tag}({cur_ids})={cur_score}')
+            del cur_ws, cur_vs_bak
+            gc.collect()
         joblib.dump(score_list, f'{lcn}_{score_tag}_list', compress=('gzip', 3))
 
     if not imp_list_add[layer.phase - 1]:
@@ -532,9 +565,11 @@ def evaluate_by_phase(model, model_name, ev_path, layer_class, weight_getter, wi
                                        or (layer.phase > 1 and not duplicate_judge(layer, cur_ids, ids0))):
                         co_ids = cur_ids + ids0
                         cur_ws, cur_vs_bak = _update_weights(co_ids)
-                        co_score = ev_score - _calc_score()
+                        co_score = _calc_score() - ev_score
                         co_score_list[layer.phase - 1].append((co_ids, co_score))
                         bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))
+                        del cur_ws, cur_vs_bak
+                        gc.collect()
 
                         if co_score > 0:
                             imp_add = cur_score + score0

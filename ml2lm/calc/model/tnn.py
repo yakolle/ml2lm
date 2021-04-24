@@ -69,7 +69,7 @@ class TnnGenerator(object):
         self._output = None
 
         self._main_generator = None
-        self._generators = []
+        self._generators = [self]
 
     def compose(self, generators):
         for generator in generators:
@@ -122,9 +122,7 @@ class TnnGenerator(object):
         self._num_src = self._merge(nums)
 
     def _build_extra(self):
-        for generator in self._generators:
-            assert isinstance(generator, TnnGenerator)
-            generator._build_extra()
+        pass
 
     @staticmethod
     def _get_rels(rel_conf, rel_feats):
@@ -242,7 +240,11 @@ class TnnGenerator(object):
         self._build_seg()
         self._build_cat()
         self._build_num()
-        self._build_extra()
+
+        for generator in self._generators:
+            assert isinstance(generator, TnnGenerator)
+            generator._build_extra()
+
         self._build_rel_block()
         self._build_hid_block()
         self._build_output()

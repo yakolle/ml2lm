@@ -163,7 +163,7 @@ class TnnGenerator(object):
         for generator in self._generators:
             assert isinstance(generator, TnnGenerator)
             extra_rel_feats = generator._get_extra_rel_feats()
-            if not extra_rel_feats:
+            if extra_rel_feats:
                 rel_feats += extra_rel_feats
 
         return rel_feats
@@ -204,7 +204,7 @@ class TnnGenerator(object):
         for generator in self._generators:
             assert isinstance(generator, TnnGenerator)
             extra_hid_feats = generator._get_extra_hid_feats()
-            if not extra_hid_feats:
+            if extra_hid_feats:
                 hid_feats += extra_hid_feats
 
         return hid_feats
@@ -225,7 +225,7 @@ class TnnGenerator(object):
         for generator in self._generators:
             assert isinstance(generator, TnnGenerator)
             extra_outputs = generator._get_extra_output()
-            if not extra_outputs:
+            if extra_outputs:
                 outputs += extra_outputs
         self._output = Dense(1, activation=self.output_activation, name='out')(self._merge(outputs))
 
@@ -352,6 +352,21 @@ class TnnWithSEGenerator(TnnGenerator):
         if isinstance(self.se_dropout, float):
             self.se_dropout = [self.se_dropout] * self.cur_phase
         if self.cur_phase > 1:
+            lcn = SegEmbedding.__name__
+            se_auc_list = joblib.load(os.path.join(self.ev_path, f'{lcn}_auc_list'))
+            joblib.dump(se_auc_list, f'{lcn}_auc_list', compress=('gzip', 3))
+            se_imp_list_add = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_add'))
+            joblib.dump(se_imp_list_add, f'{lcn}_imp_list_add', compress=('gzip', 3))
+            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_imp_list_co')):
+                se_imp_list_co = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_co'))
+                joblib.dump(se_imp_list_co, f'{lcn}_imp_list_co', compress=('gzip', 3))
+            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_imp_list_co_sub')):
+                se_imp_list_co_sub = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_co_sub'))
+                joblib.dump(se_imp_list_co_sub, f'{lcn}_imp_list_co_sub', compress=('gzip', 3))
+            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_co_auc_list')):
+                se_co_auc_list = joblib.load(os.path.join(self.ev_path, f'{lcn}_co_auc_list'))
+                joblib.dump(se_co_auc_list, f'{lcn}_co_auc_list', compress=('gzip', 3))
+
             se_auc_list = joblib.load(os.path.join(self.ev_path, 'se_auc_list'))
             joblib.dump(se_auc_list, 'se_auc_list', compress=('gzip', 3))
             se_imp_list_add = joblib.load(os.path.join(self.ev_path, 'se_imp_list_add'))

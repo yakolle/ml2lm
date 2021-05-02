@@ -1,7 +1,7 @@
 import os
 import random
 
-from keras.layers import Embedding, Flatten, BatchNormalization, Activation, Lambda, Dropout
+from keras.layers import Dropout
 
 from ml2lm.calc.model.units.rel import *
 from ml2lm.calc.model.units.seg import *
@@ -70,57 +70,10 @@ def to_tnn_data(x, cat_indices=None, seg_indices=None, num_indices=None):
     return nn_data
 
 
-def add_dense(x, units, bn=True, activation=seu, dropout=0.2, dropout_handler=Dropout):
-    x = Dense(units)(x)
-    if bn:
-        x = BatchNormalization()(x)
-    if activation is not None:
-        x = Activation(activation)(x)
-    if dropout > 0:
-        x = dropout_handler(dropout)(x)
-    return x
-
-
 def shrink(dim, shrink_factor):
     if dim > 10:
         return max(10, int(dim * shrink_factor))
     return dim
-
-
-def get_embeds(cat_input, cat_in_dims, cat_out_dims, shrink_factor=1.0):
-    import keras
-
-    embeds = []
-    for i, in_dim in enumerate(cat_in_dims):
-        embed = cat_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(lambda cats: cats[:, i, None])(
-            cat_input)
-        embed = Embedding(in_dim, shrink(cat_out_dims[i], shrink_factor))(embed)
-        embeds.append(Flatten()(embed))
-    return embeds
-
-
-def get_segments(seg_input, seg_out_dims, shrink_factor=1.0, seg_type=0, seg_func=seu, seg_input_val_range=(0, 1),
-                 seg_bin=False, only_bin=False, scale_n=0, scope_type='global', bundle_scale=False):
-    import keras
-
-    segments = []
-    for i, out_dim in enumerate(seg_out_dims):
-        segment = seg_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(lambda segs: segs[:, i, None])(
-            seg_input)
-        if scale_n > 0 or bundle_scale:
-            segment = WaveletWrapper(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                     seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin,
-                                     seg_type=seg_type, scale_n=scale_n, scope_type=scope_type,
-                                     bundle_scale=bundle_scale)(segment)
-        else:
-            if not seg_type:
-                segment = SegTriangleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                           seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
-            else:
-                segment = SegRightAngleLayer(shrink(out_dim, shrink_factor), input_val_range=seg_input_val_range,
-                                             seg_func=seg_func, include_seg_bin=seg_bin, only_seg_bin=only_bin)(segment)
-        segments.append(segment)
-    return segments
 
 
 def get_default_rel_conf():

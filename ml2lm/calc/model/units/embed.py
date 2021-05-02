@@ -1,7 +1,6 @@
 import numpy as np
 import tensorflow as tf
 from keras import backend as bk, initializers, regularizers, constraints
-from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
 
@@ -212,9 +211,6 @@ def sqrt_out_dim_calcor(seg_nums, max_param_num=None):
 
 def log_out_dim_calcor(seg_nums, max_param_num=None):
     feat_num = len(seg_nums)
-    if 1 == feat_num:
-        return seg_nums[0], max(2, int(seg_nums[0] ** 0.5)), seg_nums
-
     param_num_l = np.sum(np.log(seg_nums))
     if max_param_num is not None and param_num_l > np.log(max_param_num):
         max_dim = int(max_param_num ** (1 / feat_num))
@@ -222,7 +218,7 @@ def log_out_dim_calcor(seg_nums, max_param_num=None):
 
     in_dim = np.prod(seg_nums)
     out_dim = feat_num * int(np.log(in_dim))
-    return in_dim, out_dim, seg_nums
+    return in_dim, max(2, out_dim), seg_nums
 
 
 class SegEmbedding(AdjustableLayer):

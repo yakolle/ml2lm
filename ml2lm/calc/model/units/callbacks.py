@@ -1,3 +1,5 @@
+import copy
+import gc
 import time
 import warnings
 
@@ -252,6 +254,161 @@ def make_evaluate_handler(metric_handler, metric_bias=0., metric_scale=1.):
     return _evaluate_handler
 
 
+def sample_ev_data(ev_data, data_size=1 / 2, data_split_seed=0):
+    cur_ev_data = ev_data
+    if data_size is not None and 0. < data_size < 1.:
+        cur_ev_data = []
+        for _x, _y in ev_data:
+            aind, bind = next(ShuffleSplit(n_splits=1, test_size=data_size, random_state=data_split_seed).split(_y))
+            if isinstance(_x, dict):
+                cur_ev_data.append(({col: val[bind] for col, val in _x.items()}, _y[bind]))
+            else:
+                cur_ev_data.append((_x[bind], _y[bind]))
+    return cur_ev_data
+
+
+def get_reset_classes(reset_classes=None):
+    if reset_classes is not None:
+        if isinstance(reset_classes, list):
+            reset_classes = tuple([Embedding, SegEmbedding, FMLayer, BiCrossLayer, Dense] + reset_classes)
+        elif not isinstance(reset_classes, tuple):
+            reset_classes = (Embedding, SegEmbedding, FMLayer, BiCrossLayer, Dense, reset_classes)
+    else:
+        reset_classes = (Embedding, SegEmbedding, FMLayer, BiCrossLayer, Dense)
+    return reset_classes
+
+
+def group_weight_ids(weights, inds):
+    ws = []
+    ind_dict = {}
+    i, ei, j = 0, len(inds), 0
+    while i < ei:
+        k = inds[i][0]
+        if k not in ind_dict:
+            ws.append(weights[k])
+            ind_dict[k] = j
+            j += 1
+        i += 1
+    return ws, ind_dict
+
+
+def weight_reset(model, ev_data, beam_num=5, replace_with=0., replace_axis=None, min_gain=1e-4, data_size=1 / 10,
+                 evaluate_handler=make_evaluate_handler(metrics.roc_auc_score, metric_bias=-1., metric_scale=-1.),
+                 skip_gain_threshold=0., data_split_seed=0, reset_classes=None, detail=True, pred_batch_size=1024):
+    reset_classes = get_reset_classes(reset_classes)
+    weights = []
+    for layer in model.layers:
+        if isinstance(layer, reset_classes):
+            weights += [_w for _w in layer.trainable_weights if 2 == len(_w.shape) and _w.shape[-1] > 1]
+    values = bk.batch_get_value(weights)
+
+    replace_values = []
+    for v in values:
+        replace_values.append(replace_with(v, axis=replace_axis) if callable(replace_with) else replace_with)
+
+    def _update_weights(_inds, set_value=True, restore_value=False):
+        _ws, _ind_dict = group_weight_ids(weights, _inds)
+        _vs = bk.batch_get_value(_ws)
+        _vs_bak = copy.deepcopy(_vs)
+
+        for _i, _j in _inds:
+            _vs[_ind_dict[_i]][:, _j] = (replace_values[_i][_j] if 0 == replace_axis else replace_values[_i]
+                                         ) if not restore_value else values[_i][:, _j]
+
+        if set_value:
+            bk.batch_set_value(list(zip(_ws, _vs)))
+            return _ws, _vs_bak
+        else:
+            return _ws, _vs
+
+    def _weight_reset():
+        cur_seed = data_split_seed + cur_round if data_split_seed is not None else None
+        cur_ev_data = sample_ev_data(ev_data, data_size=data_size, data_split_seed=cur_seed)
+
+        def _calc_score():
+            return evaluate_handler([_y for _x, _y in cur_ev_data], [np.squeeze(model.predict(
+                _x, batch_size=pred_batch_size)) for _x, _y in cur_ev_data])
+
+        score = _calc_score()
+
+        def _select_weight(_inds, _last_score):
+            for _i, _w in enumerate(weights):
+                for _j in range(_w.shape[-1]):
+                    _cur_ind = (_i, _j)
+                    if _cur_ind not in _inds and _cur_ind not in skip_inds:
+                        _cur_ws, _cur_vs_bak = _update_weights([_cur_ind])
+                        _cur_score = _calc_score()
+                        _cur_gain = _last_score - _cur_score
+                        _first_gain = _cur_gain
+                        if _cur_ind not in gain_dict:
+                            gain_dict[_cur_ind] = _first_gain
+                        else:
+                            _first_gain = gain_dict[_cur_ind]
+                        if _cur_gain < skip_gain_threshold:
+                            skip_inds.add(_cur_ind)
+                        if _cur_gain >= min_gain:
+                            cur_weights.append(_cur_ind)
+                            if detail:
+                                print(f'select: last_inds={_inds}, last_score={_last_score}, added_ind={_cur_ind},',
+                                      f'first_gain={_first_gain}, cur_score={_cur_score}, gain={_cur_gain}')
+                        bk.batch_set_value(list(zip(_cur_ws, _cur_vs_bak)))
+                        del _cur_ws, _cur_vs_bak
+                        gc.collect()
+
+        def _prune_weight(_inds, _last_score):
+            for _cur_ind in _inds:
+                _cur_ws, _cur_vs_bak = _update_weights([_cur_ind], restore_value=True)
+                _cur_score = _calc_score()
+                _cur_gain = _last_score - _cur_score
+                if _cur_gain >= min_gain:
+                    cur_weights.append(_cur_ind)
+                    if detail:
+                        print(f'prune: last_inds={_inds}, last_score={_last_score}, pruned_ind={_cur_ind},',
+                              f'cur_score={_cur_score}, gain={_cur_gain}')
+                bk.batch_set_value(list(zip(_cur_ws, _cur_vs_bak)))
+                del _cur_ws, _cur_vs_bak
+                gc.collect()
+
+        cur_weights, cand_weights = [], []
+        cur_score = score
+        gain_dict = {}
+        skip_inds = set()
+        while True:
+            cur_weights.clear()
+            _select_weight(cand_weights, cur_score)
+            if not cur_weights:
+                break
+            cur_ws, cur_vs_bak = _update_weights(cur_weights)
+            del cur_ws, cur_vs_bak
+            gc.collect()
+            cur_score = _calc_score()
+            cand_weights += cur_weights
+            cur_weights_bak = cur_weights.copy()
+
+            cur_weights.clear()
+            _prune_weight(cand_weights, cur_score)
+            if not cur_weights:
+                break
+            cur_ws, cur_vs_bak = _update_weights(cur_weights, restore_value=True)
+            del cur_ws, cur_vs_bak
+            gc.collect()
+            cur_score = _calc_score()
+            for ele in cur_weights:
+                cand_weights.remove(ele)
+            if cur_weights == cur_weights_bak:
+                break
+        return _update_weights(cand_weights, restore_value=True)
+
+    cur_round = 0
+    cand_updates = []
+    while cur_round < beam_num:
+        if detail:
+            print(f'---------------------------round {cur_round}---------------------------')
+        cand_updates.append(_weight_reset())
+        cur_round += 1
+    return cand_updates
+
+
 class WeightResetter(Callback):
     def __init__(self, ev_data, trigger_lr=1e-4, init_reset_lr=1e-3, reset_threshold=0., reset_times=5,
                  evaluate_handler=make_evaluate_handler(metrics.roc_auc_score, metric_bias=-1., metric_scale=-1.),
@@ -268,15 +425,7 @@ class WeightResetter(Callback):
         self.pred_batch_size = pred_batch_size
         self.data_size = data_size
         self.data_split_seed = data_split_seed
-
-        self.reset_classes = (Embedding, SegEmbedding, FMLayer, BiCrossLayer, Dense)
-        if reset_classes is not None:
-            if isinstance(reset_classes, tuple):
-                self.reset_classes = reset_classes
-            elif isinstance(reset_classes, list):
-                self.reset_classes = tuple(list(self.reset_classes) + reset_classes)
-            else:
-                self.reset_classes = tuple(list(self.reset_classes) + [reset_classes])
+        self.reset_classes = get_reset_classes(reset_classes)
 
         self.weights = []
         self.resetters = []
@@ -310,32 +459,20 @@ class WeightResetter(Callback):
             x, batch_size=self.pred_batch_size)) for x, y in ev_data])
 
     def _update_weights(self, inds, reset=False):
-        ws = [self.weights[i] for i, _ in inds]
+        ws, ind_dict = group_weight_ids(self.weights, inds)
         vs = bk.batch_get_value(ws)
-        vs_bak = vs.copy()
-        for i, (j, k) in enumerate(inds):
-            v = vs[i][:, k]
-            vs[i][:, k] = self.resetters[j](v.shape, dtype=v.dtype) if reset else 0.
+        vs_bak = copy.deepcopy(vs)
+        for i, j in inds:
+            v = vs[ind_dict[i]]
+            v[:, j] = self.resetters[i]((v.shape[0],), dtype=v.dtype) if reset else 0.
 
         bk.batch_set_value(list(zip(ws, vs)))
         return ws, vs_bak
 
-    def _sample_ev_data(self):
-        cur_ev_data = self.ev_data
-        if self.data_size is not None and 0. < self.data_size < 1.:
-            cur_ev_data = []
-            for x, y in self.ev_data:
-                cur_seed = (self.data_split_seed + self.cnt) if self.data_split_seed is not None else None
-                aind, bind = next(ShuffleSplit(n_splits=1, test_size=self.data_size, random_state=cur_seed).split(y))
-                if isinstance(x, dict):
-                    cur_ev_data.append(({col: val[bind] for col, val in x.items()}, y[bind]))
-                else:
-                    cur_ev_data.append((x[bind], y[bind]))
-        return cur_ev_data
-
     def on_epoch_end(self, epoch, logs=None):
         if self.model.optimizer.lr <= self.trigger_lr and self.cnt < self.reset_times:
-            cur_ev_data = self._sample_ev_data()
+            cur_seed = (self.data_split_seed + self.cnt) if self.data_split_seed is not None else None
+            cur_ev_data = sample_ev_data(self.ev_data, self.data_size, cur_seed)
             score = self._calc_score(cur_ev_data)
             cand_inds = []
             w_cnts = {}
@@ -349,6 +486,8 @@ class WeightResetter(Callback):
                         cand_inds += cur_inds
                         cur_w_cnt += 1
                     bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))
+                    del cur_ws, cur_vs_bak
+                    gc.collect()
                 if cur_w_cnt > 0:
                     w_cnts[w.name] = cur_w_cnt
 

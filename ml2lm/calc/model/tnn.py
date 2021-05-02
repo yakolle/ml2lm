@@ -1,8 +1,6 @@
-import gc
-
 import joblib
 from keras import Input, Model
-from keras.layers import concatenate
+from keras.layers import concatenate, Flatten, Lambda, BatchNormalization, Activation
 from keras.optimizers import Adam
 
 from ml2lm.calc.model.nn_util import *
@@ -11,12 +9,13 @@ from ml2lm.calc.model.units.callbacks import *
 
 class TnnGenerator(object):
     def __init__(self, x, cat_in_dims=None, cat_out_dims=None, embed_dropout=0.2, embed_dropout_handler=Dropout,
-                 add_cat_src=False, seg_type=0, seg_x_val_range=(0, 1), seg_func=seu, feat_seg_bin=False,
-                 feat_only_bin=False, scale_n=0, scope_type='global', bundle_scale=False, seg_dropout=0.1,
-                 seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True, seg_num_flag=True,
-                 num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False, hidden_units=(320, 64),
-                 hidden_activation=seu, hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout,
-                 hid_bn_num_flag=False, output_activation=None, loss='mse', init_lr=1e-3, nn_metrics=None, **kwargs):
+                 add_cat_src=False, seg_class=SegTriangleLayer, seg_x_val_range=(0, 1), seg_func=seu,
+                 feat_seg_bin=False, feat_only_bin=False, scale_n=0, scope_type='global', bundle_scale=False,
+                 seg_dropout=0.1, seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True,
+                 seg_num_flag=True, num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False,
+                 hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05),
+                 hidden_dropout_handler=Dropout, hid_bn_num_flag=False, output_activation=None, loss='mse',
+                 init_lr=1e-3, nn_metrics=None, **kwargs):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
@@ -25,7 +24,7 @@ class TnnGenerator(object):
         self.embed_dropout_handler = embed_dropout_handler
         self.add_cat_src = add_cat_src
 
-        self.seg_type = seg_type
+        self.seg_class = seg_class
         self.seg_x_val_range = seg_x_val_range
         self.seg_func = seg_func
         self.feat_seg_bin = feat_seg_bin
@@ -78,25 +77,48 @@ class TnnGenerator(object):
             generator._main_generator = self
             generator.inputs = self.inputs
 
+    def _get_embeds(self):
+        import keras
+
+        cat_input = self.inputs['cats']
+        embeds = []
+        for i, in_dim in enumerate(self.cat_in_dims):
+            cat = cat_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(
+                lambda cats: cats[:, i, None])(cat_input)
+            embed = Embedding(in_dim, self.cat_out_dims[i])(cat)
+            embeds.append(Flatten()(embed))
+        return embeds
+
     def _build_embed(self):
         cat_input = self.inputs.get('cats')
         if cat_input is not None:
-            self._embed_src = concatenate(get_embeds(cat_input, self.cat_in_dims, self.cat_out_dims))
-
+            self._embed_src = concatenate(self._get_embeds())
             self._embed = BatchNormalization()(self._embed_src)
             if self.embed_dropout > 0:
                 self._embed = self.embed_dropout_handler(self.embed_dropout)(self._embed)
 
+    def _get_segments(self, seg_input, seg_out_dims):
+        import keras
+
+        segments = []
+        for i, out_dim in enumerate(seg_out_dims):
+            seg = seg_input[:, i, None] if keras.__version__ >= '2.4.0' else Lambda(
+                lambda segs: segs[:, i, None])(seg_input)
+            if self.scale_n > 0 or self.bundle_scale:
+                segment = WaveletWrapper(out_dim, input_val_range=self.seg_x_val_range, seg_func=self.seg_func,
+                                         include_seg_bin=self.feat_seg_bin, only_seg_bin=self.feat_only_bin,
+                                         seg_class=self.seg_class, scale_n=self.scale_n, scope_type=self.scope_type,
+                                         bundle_scale=self.bundle_scale)(seg)
+            else:
+                segment = self.seg_class(out_dim, input_val_range=self.seg_x_val_range, seg_func=self.seg_func,
+                                         include_seg_bin=self.feat_seg_bin, only_seg_bin=self.feat_only_bin)(seg)
+            segments.append(segment)
+        return segments
+
     def _build_seg(self):
         seg_input, num_input = self.inputs.get('segs'), self.inputs.get('nums')
-        segments = get_segments(seg_input, self.seg_out_dims, seg_type=self.seg_type, seg_func=self.seg_func,
-                                seg_input_val_range=self.seg_x_val_range, seg_bin=self.feat_seg_bin,
-                                only_bin=self.feat_only_bin, scale_n=self.scale_n, scope_type=self.scope_type,
-                                bundle_scale=self.bundle_scale) if self.seg_flag and seg_input is not None else[]
-        segments += get_segments(num_input, self.num_segs, seg_type=self.seg_type, seg_func=self.seg_func,
-                                 seg_input_val_range=self.seg_x_val_range, seg_bin=self.feat_seg_bin,
-                                 only_bin=self.feat_only_bin, scale_n=self.scale_n, scope_type=self.scope_type,
-                                 bundle_scale=self.bundle_scale) if self.seg_num_flag and num_input is not None else []
+        segments = self._get_segments(seg_input, self.seg_out_dims) if self.seg_flag and seg_input is not None else[]
+        segments += self._get_segments(num_input, self.num_segs) if self.seg_num_flag and num_input is not None else []
         self._seg_src = concatenate(segments) if segments else None
 
         self._seg = BatchNormalization()(self._seg_src) if self._seg_src is not None else None
@@ -272,7 +294,8 @@ class TnnWithTEGenerator(TnnGenerator):
 
         self.te_dropout_handler = te_dropout_handler
 
-        self.TE = TargetEmbedding4CPU if 'cpu' == worker_type else TargetEmbedding
+        self.TE = TargetEmbedding4CPU if 'cpu' == worker_type else (
+            TargetEmbedding4TPU if 'tpu' == worker_type else TargetEmbedding)
         self._te_cat = None
         self._te_num = None
 
@@ -352,31 +375,13 @@ class TnnWithSEGenerator(TnnGenerator):
         if isinstance(self.se_dropout, float):
             self.se_dropout = [self.se_dropout] * self.cur_phase
         if self.cur_phase > 1:
-            lcn = SegEmbedding.__name__
-            se_auc_list = joblib.load(os.path.join(self.ev_path, f'{lcn}_auc_list'))
-            joblib.dump(se_auc_list, f'{lcn}_auc_list', compress=('gzip', 3))
-            se_imp_list_add = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_add'))
-            joblib.dump(se_imp_list_add, f'{lcn}_imp_list_add', compress=('gzip', 3))
-            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_imp_list_co')):
-                se_imp_list_co = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_co'))
-                joblib.dump(se_imp_list_co, f'{lcn}_imp_list_co', compress=('gzip', 3))
-            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_imp_list_co_sub')):
-                se_imp_list_co_sub = joblib.load(os.path.join(self.ev_path, f'{lcn}_imp_list_co_sub'))
-                joblib.dump(se_imp_list_co_sub, f'{lcn}_imp_list_co_sub', compress=('gzip', 3))
-            if os.path.exists(os.path.join(self.ev_path, f'{lcn}_co_auc_list')):
-                se_co_auc_list = joblib.load(os.path.join(self.ev_path, f'{lcn}_co_auc_list'))
-                joblib.dump(se_co_auc_list, f'{lcn}_co_auc_list', compress=('gzip', 3))
+            def __load_scores(sn):
+                if not os.path.exists(sn) and os.path.exists(os.path.join(self.ev_path, sn)):
+                    joblib.dump(joblib.load(os.path.join(self.ev_path, sn)), sn, compress=('gzip', 3))
 
-            se_auc_list = joblib.load(os.path.join(self.ev_path, 'se_auc_list'))
-            joblib.dump(se_auc_list, 'se_auc_list', compress=('gzip', 3))
-            se_imp_list_add = joblib.load(os.path.join(self.ev_path, 'se_imp_list_add'))
-            joblib.dump(se_imp_list_add, 'se_imp_list_add', compress=('gzip', 3))
-            se_imp_list_co = joblib.load(os.path.join(self.ev_path, 'se_imp_list_co'))
-            joblib.dump(se_imp_list_co, 'se_imp_list_co', compress=('gzip', 3))
-            se_imp_list_co_sub = joblib.load(os.path.join(self.ev_path, 'se_imp_list_co_sub'))
-            joblib.dump(se_imp_list_co_sub, 'se_imp_list_co_sub', compress=('gzip', 3))
-            se_co_auc_list = joblib.load(os.path.join(self.ev_path, 'se_co_auc_list'))
-            joblib.dump(se_co_auc_list, 'se_co_auc_list', compress=('gzip', 3))
+            for lcn in [SegEmbedding.__name__, 'se']:
+                for score_tag in ['auc_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub', 'co_auc_list']:
+                    __load_scores(f'{lcn}_{score_tag}')
 
             self.se_feat_idx_list = joblib.load(os.path.join(self.ev_path, 'se_feat_idx_list'))
             last_imps = joblib.load(os.path.join(self.ev_path, f'se_imp_list_{self.importance_mode}'))[
@@ -475,30 +480,15 @@ class TnnWithSEGenerator(TnnGenerator):
         layer = evaluate_by_phase(model, model_name, ev_path, SegEmbedding, weight_getter, wids_getter, duplicate_judge,
                                   ev_data, co_ev_flag=co_ev_flag, end_time=end_time, pred_batch_size=pred_batch_size)
         if layer is not None:
-            lcn = SegEmbedding.__name__
-            se_auc_list = joblib.load(f'{lcn}_auc_list')
-            se_auc_list[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
-                                            se_auc_list[layer.phase - 1]]
-            joblib.dump(se_auc_list, 'se_auc_list', compress=('gzip', 3))
-            se_imp_list_add = joblib.load(f'{lcn}_imp_list_add')
-            se_imp_list_add[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
-                                                se_imp_list_add[layer.phase - 1]]
-            joblib.dump(se_imp_list_add, 'se_imp_list_add', compress=('gzip', 3))
-            if os.path.exists(f'{lcn}_imp_list_co'):
-                se_imp_list_co = joblib.load(f'{lcn}_imp_list_co')
-                se_imp_list_co[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
-                                                   se_imp_list_co[layer.phase - 1]]
-                joblib.dump(se_imp_list_co, 'se_imp_list_co', compress=('gzip', 3))
-            if os.path.exists(f'{lcn}_imp_list_co_sub'):
-                se_imp_list_co_sub = joblib.load(f'{lcn}_imp_list_co_sub')
-                se_imp_list_co_sub[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
-                                                       se_imp_list_co_sub[layer.phase - 1]]
-                joblib.dump(se_imp_list_co_sub, 'se_imp_list_co_sub', compress=('gzip', 3))
-            if os.path.exists(f'{lcn}_co_auc_list'):
-                se_co_auc_list = joblib.load(f'{lcn}_co_auc_list')
-                se_co_auc_list[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in
-                                                   se_co_auc_list[layer.phase - 1]]
-                joblib.dump(se_co_auc_list, 'se_co_auc_list', compress=('gzip', 3))
+            def __dump_scores(_score_tag):
+                if os.path.exists(f'{lcn}_{_score_tag}'):
+                    scores = joblib.load(f'{lcn}_{_score_tag}')
+                    scores[layer.phase - 1] = [(get_feats_idx(layer, ids), imp) for ids, imp in scores[layer.phase - 1]]
+                    joblib.dump(scores, f'{scn}_{_score_tag}', compress=('gzip', 3))
+
+            lcn, scn = SegEmbedding.__name__, 'se'
+            for score_tag in ['auc_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub', 'co_auc_list']:
+                __dump_scores(score_tag)
 
 
 def get_layers_by_classes(model, classes):

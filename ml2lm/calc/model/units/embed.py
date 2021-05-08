@@ -1,13 +1,14 @@
 import numpy as np
 import tensorflow as tf
 from keras import backend as bk, initializers, regularizers, constraints
+from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
 
 
 class TargetEmbedding(AdjustableLayer):
     def __init__(self, seg_num=200, noise_scale=0.2, period=100, pave_momentum=0.5, mask_zero=False,
-                 target_momentum=0.99, val_epsilon=1e-3, val_inf=1e10, embed_only=True, **kwargs):
+                 target_momentum=0.99, val_epsilon=1e-3, val_inf=1e10, embed_only=True, io_aligned=True, **kwargs):
         super(TargetEmbedding, self).__init__(**kwargs)
         self.supports_masking = True
 
@@ -20,14 +21,15 @@ class TargetEmbedding(AdjustableLayer):
         self.val_epsilon = val_epsilon
         self.val_inf = val_inf
         self.embed_only = embed_only
+        self.io_aligned = io_aligned
 
         self.input_dim = None
+        self.target_dim = None
+        self._target_dim = None
         self.embedding = None
         self.update_cnt = None
 
         self.val_momentum = self.val_epsilon ** (1 / self.period)
-        self.cur_min = None
-        self.cur_max = None
         self.moving_min = None
         self.moving_max = None
 
@@ -35,13 +37,16 @@ class TargetEmbedding(AdjustableLayer):
 
     def build(self, input_shape):
         self.input_dim = input_shape[0][-1]
+        self.target_dim = input_shape[1][-1]
+        self._target_dim = self.target_dim
+        if self.io_aligned:
+            assert (self.input_dim == self.target_dim or 1 == self.target_dim)
+            self._target_dim = 1
 
-        ele_num = self.input_dim * (self.seg_num + self.mask_zero)
+        ele_num = self.input_dim * self._target_dim * (self.seg_num + self.mask_zero)
         self.embedding = self.add_weight(shape=(ele_num,), name='embedding', initializer='zeros', trainable=False)
         self.update_cnt = self.add_weight(shape=(ele_num,), name='update_cnt', initializer='zeros', trainable=False)
 
-        self.cur_min = self.add_weight(shape=(self.input_dim,), name='cur_min', initializer='zeros', trainable=False)
-        self.cur_max = self.add_weight(shape=(self.input_dim,), name='cur_max', initializer='ones', trainable=False)
         self.moving_min = self.add_weight(shape=(self.input_dim,), name='moving_min', initializer='zeros',
                                           trainable=False)
         self.moving_max = self.add_weight(shape=(self.input_dim,), name='moving_max', initializer='ones',
@@ -51,12 +56,16 @@ class TargetEmbedding(AdjustableLayer):
         self.built = True
 
     def _calc_seg_indices(self, val, min_val, max_val):
-        seg_scale = (self.seg_num - 1) / (max_val - min_val)
+        seg_scale = self.seg_num / (max_val - min_val)
         seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, self.seg_num - 1) + self.mask_zero
         if self.mask_zero:
             seg_indices *= bk.cast(val != 0, 'int32')
+
         seg_num = self.seg_num + self.mask_zero
-        seg_indices += bk.cast(bk.arange(0, self.input_dim * seg_num, seg_num), dtype='int32')
+        ele_num = self.input_dim * seg_num * self._target_dim
+        if self._target_dim > 1:
+            seg_indices = bk.repeat_elements(seg_indices, self._target_dim, axis=-1)
+        seg_indices += bk.cast(bk.arange(0, ele_num, seg_num), dtype='int32')
 
         return seg_indices
 
@@ -72,39 +81,39 @@ class TargetEmbedding(AdjustableLayer):
 
     def _pave_embedding(self, _embedding):
         dtype = _embedding.dtype
-        start, col_num = int(self.mask_zero), self.seg_num + self.mask_zero
-        indices = bk.arange(0, self.input_dim * col_num) % col_num
+        start, seg_num = int(self.mask_zero), self.seg_num + self.mask_zero
+        ele_num = self.input_dim * self._target_dim * seg_num
+        indices = bk.arange(0, ele_num) % seg_num
         _embedding1 = bk.concatenate([_embedding[1:], _embedding[-1:]])
         _embedding_1 = bk.concatenate([_embedding[0:1], _embedding[:-1]])
 
         return (bk.cast(indices < start, dtype) * _embedding + bk.cast(indices == start, dtype) * _embedding1
-                + bk.cast(indices == col_num - 1, dtype) * _embedding_1 + bk.cast(
-            (indices > start) & (indices < col_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
+                + bk.cast(indices == seg_num - 1, dtype) * _embedding_1 + bk.cast(
+            (indices > start) & (indices < seg_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
 
     def adjust(self):
-        dtype = self.embedding.dtype
-
-        unchanged_mask = bk.cast(0 == self.update_cnt, dtype)
+        unchanged_mask = bk.cast(0 == self.update_cnt, self.embedding.dtype)
         paved_embedding = self._pave_embedding(self.embedding) * unchanged_mask
         unpaved_embedding = self.embedding * unchanged_mask
         bk.update_add(self.embedding, (1 - self.pave_momentum) * (paved_embedding - unpaved_embedding))
 
-        inv_seg_scale = (self.cur_max - self.cur_min) / (self.seg_num - 1)
-        x = bk.expand_dims(bk.arange(0, self.seg_num, dtype=dtype), axis=-1) * inv_seg_scale + (
-            self.cur_min + self.val_epsilon * inv_seg_scale)
-        x = bk.concatenate([x, x + (1. - 2 * self.val_epsilon) * inv_seg_scale], axis=0)
-        y = bk.transpose(bk.reshape(self.embedding, (self.input_dim, -1)))[int(self.mask_zero):]
-        y = bk.concatenate([y, y], axis=0)
-        seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
-        tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, y)
-
-        bk.update(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
-        unmatched_mask = bk.cast(0 == self.embedding, dtype)
-        bk.update_add(self.embedding, self._pave_embedding(self.embedding) * unmatched_mask)
-
         bk.update(self.update_cnt, bk.zeros_like(self.update_cnt))
-        bk.update(self.cur_min, self.moving_min)
-        bk.update(self.cur_max, self.moving_max)
+
+    def _update_embedding(self, x, y, seg_indices, seg_embeddings):
+        dtype = self.embedding.dtype
+        delta_embeddings = (1 - self.target_momentum) * (y - seg_embeddings)
+        tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, delta_embeddings)
+
+        bk.update_add(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
+        bk.update_add(self.update_cnt, tmp_cnt)
+
+        if self.mask_zero:
+            min_val = bk.min(x + bk.constant(self.val_inf, dtype=dtype) * bk.cast(0 == x, dtype), axis=0)
+            max_val = bk.max(x + bk.constant(-self.val_inf, dtype=dtype) * bk.cast(0 == x, dtype), axis=0)
+        else:
+            min_val, max_val = bk.min(x, axis=0), bk.max(x, axis=0)
+        bk.moving_average_update(self.moving_min, min_val, self.val_momentum)
+        bk.moving_average_update(self.moving_max, max_val, self.val_momentum)
 
     def call(self, inputs, training=None):
         if training is None:
@@ -112,35 +121,25 @@ class TargetEmbedding(AdjustableLayer):
         training = bk.get_value(training)
 
         (x, y), dtype = inputs, self.embedding.dtype
-        if training:
-            bk.update(self.call_cnt, self.call_cnt + 1)
-            y = bk.cast(y, dtype)
-            if self.mask_zero:
-                y *= bk.cast(x != 0, dtype)
         x = bk.cast(x, dtype)
 
-        seg_indices = self._calc_seg_indices(x, self.cur_min, self.cur_max)
+        seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
         seg_embeddings = bk.gather(self.embedding, seg_indices)
         output = seg_embeddings
 
         if training:
-            output = seg_embeddings * (1. + bk.random_uniform(bk.shape(seg_embeddings), minval=-self.noise_scale,
-                                                              maxval=self.noise_scale, dtype=dtype))
-
-            delta_embeddings = (1 - self.target_momentum) * (y - seg_embeddings)
-            tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, delta_embeddings)
-
-            bk.update_add(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
-            bk.update_add(self.update_cnt, tmp_cnt)
-
-            if self.mask_zero:
-                min_val = bk.min(x + bk.constant(self.val_inf, dtype=dtype) * bk.cast(0 == x, dtype), axis=0)
-                max_val = bk.max(x + bk.constant(-self.val_inf, dtype=dtype) * bk.cast(0 == x, dtype), axis=0)
+            bk.update(self.call_cnt, self.call_cnt + 1)
+            if self.io_aligned:
+                y = bk.cast(y, dtype) * (bk.cast(x != 0, dtype) if self.mask_zero else bk.ones_like(x))
             else:
-                min_val, max_val = bk.min(x, axis=0), bk.max(x, axis=0)
-            bk.moving_average_update(self.moving_min, min_val, self.val_momentum)
-            bk.moving_average_update(self.moving_max, max_val, self.val_momentum)
+                _x = bk.expand_dims(x, -1)
+                y = bk.reshape(bk.expand_dims(bk.cast(y, dtype), 1) * (bk.cast(
+                    _x != 0, dtype) if self.mask_zero else bk.ones_like(_x)), (-1, self.input_dim * self._target_dim))
+            if self.noise_scale > 0:
+                output = seg_embeddings * (1. + bk.random_uniform(bk.shape(seg_embeddings), minval=-self.noise_scale,
+                                                                  maxval=self.noise_scale, dtype=dtype))
 
+            self._update_embedding(x, y, seg_indices, seg_embeddings)
             if self.period is not None and self.call_cnt % self.period == 0:
                 self.adjust()
 
@@ -158,14 +157,15 @@ class TargetEmbedding(AdjustableLayer):
             'target_momentum': self.target_momentum,
             'val_epsilon': self.val_epsilon,
             'val_inf': self.val_inf,
-            'embed_only': self.embed_only
+            'embed_only': self.embed_only,
+            'io_aligned': self.io_aligned
         }
         base_config = super(TargetEmbedding, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
     def compute_output_shape(self, input_shape):
         output_shape = list(input_shape[0])
-        output_shape[-1] *= (2 - self.embed_only)
+        output_shape[-1] = (2 - self.embed_only) * self.input_dim * self._target_dim
         return tuple(output_shape)
 
 
@@ -288,7 +288,7 @@ class SegEmbedding(AdjustableLayer):
 
     @staticmethod
     def _calc_indices(val, min_val, max_val, seg_num, seg_num_mul):
-        seg_scale = (bk.cast(seg_num, val.dtype) - 1.) / (max_val - min_val)
+        seg_scale = bk.cast(seg_num, val.dtype) / (max_val - min_val)
         seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, seg_num - 1)
         seg_indices = bk.squeeze(bk.dot(seg_indices, seg_num_mul), -1)
 

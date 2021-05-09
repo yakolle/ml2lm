@@ -42,24 +42,25 @@ class DeltaDifferenceDelegate(TargetEmbedding):
         self.grad_ease = grad_ease
 
     def call(self, inputs, training=None):
-        x, y = inputs
-
         if bk.get_value(training):
             dtype = self.embedding.dtype
             bk.update(self.call_cnt, self.call_cnt + 1)
-            x = bk.cast(x, dtype)
-            if self.io_aligned:
-                y = bk.cast(y, dtype) * bk.ones_like(x)
-            else:
-                y = bk.reshape(bk.expand_dims(bk.cast(y, dtype), 1) * bk.ones_like(bk.expand_dims(x, -1)),
-                               (-1, self.input_dim * self._target_dim))
+            if self.period is not None and self.call_cnt % self.period == 0:
+                self.adjust()
 
             @tf.custom_gradient
-            def __delegate(_x):
+            def __delegate(_x, _y):
+                x = bk.cast(_x, dtype)
+                if self.io_aligned:
+                    y = bk.cast(_y, dtype) * bk.ones_like(x)
+                else:
+                    y = bk.reshape(bk.expand_dims(bk.cast(_y, dtype), 1) * bk.ones_like(bk.expand_dims(x, -1)),
+                                   (-1, self.input_dim * self._target_dim))
+
                 def _grad(dy):
-                    seg_indices = self._calc_seg_indices(_x, self.moving_min, self.moving_max)
+                    seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
                     seg_embeddings = bk.gather(self.embedding, seg_indices)
-                    self._update_embedding(_x, y, seg_indices, seg_embeddings)
+                    self._update_embedding(x, y, seg_indices, seg_embeddings)
 
                     dys = diff_by_col_num(self.embedding, col_num=self.seg_num, direction='both')
                     cur_dy = bk.gather((dys[0] + dys[1]) / 2, seg_indices)
@@ -70,14 +71,11 @@ class DeltaDifferenceDelegate(TargetEmbedding):
                         cur_dy = bk.sum(cur_dy, axis=-1) / self.input_dim
 
                     cur_dy *= self.seg_num / (self.moving_max - self.moving_min)
-                    return cur_dy * self.grad_ease
+                    return cur_dy * self.grad_ease, dy
 
-                return inputs[-1], _grad
+                return _y, _grad
 
-            output = __delegate(x)
-            if self.period is not None and self.call_cnt % self.period == 0:
-                self.adjust()
-            return output
+            return __delegate(inputs[0], inputs[1])
         return inputs[-1]
 
     def get_config(self):
@@ -97,7 +95,7 @@ def node_embedding(node, embed_in_dim, embed_out_dim, dd_delegate=None):
     y = bk.reshape(y, (-1, bk.prod(bk.shape(y)[1:])))
     if dd_delegate is None:
         dd_delegate = DeltaDifferenceDelegate(delta_x_num=100, grad_ease=1., io_aligned=False)
-    return y, dd_delegate([node, y])
+    return dd_delegate([node, y])
 
 
 def unit_step(x, step_point=0., grad_range=(-0.5, 0.5), grad_ease=1.):
@@ -146,6 +144,23 @@ def unit_box(x, box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75))
         return y, __grad
 
     return _unit_box(x)
+
+
+def gather_in_flow(embed, indices, embed_in_dim):
+    @tf.custom_gradient
+    def _gather(_embed, _indices):
+        y = bk.gather(_embed, bk.cast(bk.clip(_indices, 0, embed_in_dim), 'int32'))
+        in_dim, out_dim = bk.shape(_indices)[-1], bk.shape(_embed)[-1]
+        y = bk.reshape(y, (-1, in_dim * out_dim))
+
+        def __grad(dy):
+            cur_dy = bk.reshape(dy, (-1, in_dim, out_dim))
+            cur_dy = bk.sum(cur_dy, axis=-1) / bk.cast(in_dim, cur_dy.dtype)
+            return dy, cur_dy
+
+        return y, __grad
+
+    return _gather(embed, indices)
 
 
 def epsilon_grad(x, epsilon=1e-3):

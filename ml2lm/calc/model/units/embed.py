@@ -30,6 +30,8 @@ class TargetEmbedding(AdjustableLayer):
         self.update_cnt = None
 
         self.val_momentum = self.val_epsilon ** (1 / self.period)
+        self.cur_min = None
+        self.cur_max = None
         self.moving_min = None
         self.moving_max = None
 
@@ -47,6 +49,8 @@ class TargetEmbedding(AdjustableLayer):
         self.embedding = self.add_weight(shape=(ele_num,), name='embedding', initializer='zeros', trainable=False)
         self.update_cnt = self.add_weight(shape=(ele_num,), name='update_cnt', initializer='zeros', trainable=False)
 
+        self.cur_min = self.add_weight(shape=(self.input_dim,), name='cur_min', initializer='zeros', trainable=False)
+        self.cur_max = self.add_weight(shape=(self.input_dim,), name='cur_max', initializer='ones', trainable=False)
         self.moving_min = self.add_weight(shape=(self.input_dim,), name='moving_min', initializer='zeros',
                                           trainable=False)
         self.moving_max = self.add_weight(shape=(self.input_dim,), name='moving_max', initializer='ones',
@@ -56,7 +60,9 @@ class TargetEmbedding(AdjustableLayer):
         self.built = True
 
     def _calc_seg_indices(self, val, min_val, max_val):
-        seg_scale = self.seg_num / (max_val - min_val)
+        gap = max_val - min_val
+        gap_ind = gap < self.val_epsilon
+        seg_scale = self.seg_num / (bk.cast(gap_ind, val.dtype) * self.val_epsilon + bk.cast(~gap_ind, val.dtype) * gap)
         seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, self.seg_num - 1) + self.mask_zero
         if self.mask_zero:
             seg_indices *= bk.cast(val != 0, 'int32')
@@ -92,12 +98,29 @@ class TargetEmbedding(AdjustableLayer):
             (indices > start) & (indices < seg_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
 
     def adjust(self):
-        unchanged_mask = bk.cast(0 == self.update_cnt, self.embedding.dtype)
+        dtype = self.embedding.dtype
+
+        unchanged_mask = bk.cast(0 == self.update_cnt, dtype)
         paved_embedding = self._pave_embedding(self.embedding) * unchanged_mask
         unpaved_embedding = self.embedding * unchanged_mask
         bk.update_add(self.embedding, (1 - self.pave_momentum) * (paved_embedding - unpaved_embedding))
 
+        inv_seg_scale = (self.cur_max - self.cur_min) / self.seg_num
+        x = bk.expand_dims(bk.arange(0, self.seg_num, dtype=dtype), axis=-1) * inv_seg_scale + (
+            self.cur_min + self.val_epsilon * inv_seg_scale)
+        x = bk.concatenate([x, x + (1. - 2 * self.val_epsilon) * inv_seg_scale], axis=0)
+        y = bk.transpose(bk.reshape(self.embedding, (self.input_dim * self._target_dim, -1)))[int(self.mask_zero):]
+        y = bk.concatenate([y, y], axis=0)
+        seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
+        tmp_embedding, tmp_cnt = self._sum_seg_embeddings(seg_indices, y)
+
+        bk.update(self.embedding, tmp_embedding / (tmp_cnt + bk.cast(0 == tmp_cnt, dtype=dtype)))
+        unmatched_mask = bk.cast(0 == self.embedding, dtype)
+        bk.update_add(self.embedding, self._pave_embedding(self.embedding) * unmatched_mask)
+
         bk.update(self.update_cnt, bk.zeros_like(self.update_cnt))
+        bk.update(self.cur_min, self.moving_min)
+        bk.update(self.cur_max, self.moving_max)
 
     def _update_embedding(self, x, y, seg_indices, seg_embeddings):
         dtype = self.embedding.dtype
@@ -123,13 +146,13 @@ class TargetEmbedding(AdjustableLayer):
         (x, y), dtype = inputs, self.embedding.dtype
         x = bk.cast(x, dtype)
 
-        seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
+        seg_indices = self._calc_seg_indices(x, self.cur_min, self.cur_max)
         seg_embeddings = bk.gather(self.embedding, seg_indices)
         output = seg_embeddings
 
         if training:
             bk.update(self.call_cnt, self.call_cnt + 1)
-            if self.io_aligned:
+            if 1 == self._target_dim:
                 y = bk.cast(y, dtype) * (bk.cast(x != 0, dtype) if self.mask_zero else bk.ones_like(x))
             else:
                 _x = bk.expand_dims(x, -1)

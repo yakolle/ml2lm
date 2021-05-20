@@ -8,18 +8,19 @@ from ml2lm.calc.model.units.callbacks import *
 
 
 class TnnGenerator(object):
-    def __init__(self, x, cat_in_dims=None, cat_out_dims=None, embed_dropout=0.2, embed_dropout_handler=Dropout,
-                 add_cat_src=False, seg_class=SegTriangleLayer, seg_x_val_range=(0, 1), seg_func=seu,
-                 feat_seg_bin=False, feat_only_bin=False, scale_n=0, scope_type='global', bundle_scale=False,
-                 seg_dropout=0.1, seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None, add_seg_src=True,
-                 seg_num_flag=True, num_segs=None, rel_conf=None, rel_bn_num_flag=False, rel_embed_src_flag=False,
-                 hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05),
+    def __init__(self, x, cat_in_dims=None, cat_out_dims=None, embed_norm_handler=BatchNormalization, embed_dropout=0.2,
+                 embed_dropout_handler=Dropout, add_cat_src=False, seg_class=SegTriangleLayer, seg_x_val_range=(0, 1),
+                 seg_func=seu, feat_seg_bin=False, feat_only_bin=False, scale_n=0, scope_type='global',
+                 bundle_scale=False, seg_dropout=0.1, seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None,
+                 add_seg_src=True, seg_num_flag=True, num_segs=None, rel_conf=None, rel_bn_num_flag=False,
+                 rel_embed_src_flag=False, hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05),
                  hidden_dropout_handler=Dropout, hid_bn_num_flag=False, output_activation=None, loss='mse',
                  init_lr=1e-3, nn_metrics=None, **kwargs):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
         self.cat_out_dims = cat_out_dims
+        self.embed_norm_handler = embed_norm_handler
         self.embed_dropout = embed_dropout
         self.embed_dropout_handler = embed_dropout_handler
         self.add_cat_src = add_cat_src
@@ -93,7 +94,7 @@ class TnnGenerator(object):
         cat_input = self.inputs.get('cats')
         if cat_input is not None:
             self._embed_src = concatenate(self._get_embeds())
-            self._embed = BatchNormalization()(self._embed_src)
+            self._embed = self.embed_norm_handler()(self._embed_src)
             if self.embed_dropout > 0:
                 self._embed = self.embed_dropout_handler(self.embed_dropout)(self._embed)
 
@@ -278,8 +279,8 @@ class TnnGenerator(object):
 
 class TnnWithTEGenerator(TnnGenerator):
     def __init__(self, te_cat_conf=None, bn_te_cat_flag=True, te_cat_dp=0., ie_te_cat_flag=False, te_num_conf=None,
-                 bn_te_num_flag=True, te_num_dp=0., ie_te_num_flag=False, te_dropout_handler=Dropout, worker_type=None,
-                 **kwargs):
+                 bn_te_num_flag=True, te_num_dp=0., ie_te_num_flag=False, te_norm_handler=BatchNormalization,
+                 te_dropout_handler=Dropout, worker_type=None, **kwargs):
         super(TnnWithTEGenerator, self).__init__(**kwargs)
 
         self.te_cat_conf = te_cat_conf
@@ -292,6 +293,7 @@ class TnnWithTEGenerator(TnnGenerator):
         self.te_num_dp = min(max(te_num_dp, 0.), 1.)
         self.ie_te_num_flag = ie_te_num_flag
 
+        self.te_norm_handler = te_norm_handler
         self.te_dropout_handler = te_dropout_handler
 
         self.TE = TargetEmbedding4CPU if 'cpu' == worker_type else (
@@ -306,7 +308,7 @@ class TnnWithTEGenerator(TnnGenerator):
             self._te_cat = te([self._cat_src, target_input])
 
             if self.bn_te_cat_flag:
-                self._te_cat = BatchNormalization()(self._te_cat)
+                self._te_cat = self.te_norm_handler()(self._te_cat)
             if self.te_cat_dp > 0:
                 self._te_cat = self.te_dropout_handler(self.te_cat_dp)(self._te_cat)
 
@@ -317,7 +319,7 @@ class TnnWithTEGenerator(TnnGenerator):
             self._te_num = te([self._num_src, target_input])
 
             if self.bn_te_num_flag:
-                self._te_num = BatchNormalization()(self._te_num)
+                self._te_num = self.te_norm_handler()(self._te_num)
             if self.te_num_dp > 0:
                 self._te_num = self.te_dropout_handler(self.te_num_dp)(self._te_num)
 
@@ -351,16 +353,17 @@ class TnnWithTEGenerator(TnnGenerator):
 
 
 class TnnWithSEGenerator(TnnGenerator):
-    def __init__(self, beam_num=20, cur_phase=1, ev_path='.', importance_mode='add', se_dropout=0.5,
-                 se_dropout_handler=Dropout, se_seg_nums=None, feat_idx0=None, embed_trainable_list=None,
-                 se_input_val_range=(0., 1.), out_dim_calcor=log_out_dim_calcor, max_param_num=int(1e6), se_period=100,
-                 se_pave_momentum=0.5, **kwargs):
+    def __init__(self, beam_num=20, cur_phase=1, ev_path='.', importance_mode='add', se_norm_handler=BatchNormalization,
+                 se_dropout=0.5, se_dropout_handler=Dropout, se_seg_nums=None, feat_idx0=None,
+                 embed_trainable_list=None, se_input_val_range=(0., 1.), out_dim_calcor=log_out_dim_calcor,
+                 max_param_num=int(1e6), se_period=100, se_pave_momentum=0.5, **kwargs):
         super(TnnWithSEGenerator, self).__init__(**kwargs)
 
         self.beam_num = beam_num
         self.cur_phase = cur_phase
         self.ev_path = ev_path
         self.importance_mode = importance_mode
+        self.se_norm_handler = se_norm_handler
         self.se_dropout = se_dropout
         self.se_dropout_handler = se_dropout_handler
         self.se_seg_nums = se_seg_nums
@@ -416,7 +419,7 @@ class TnnWithSEGenerator(TnnGenerator):
 
         ses = []
         for i, se_src in enumerate(self._se_srcs):
-            se = BatchNormalization()(se_src)
+            se = self.se_norm_handler()(se_src)
             if self.se_dropout[i] > 0.:
                 se = self.se_dropout_handler(self.se_dropout[i])(se)
             ses.append(se)

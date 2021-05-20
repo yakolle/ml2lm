@@ -42,7 +42,11 @@ class DeltaDifferenceDelegate(TargetEmbedding):
         self.grad_ease = grad_ease
 
     def call(self, inputs, training=None):
-        if bk.get_value(training):
+        if training is None:
+            training = bk.learning_phase()
+        training = bk.get_value(training)
+
+        if training:
             dtype = self.embedding.dtype
             bk.update(self.call_cnt, self.call_cnt + 1)
             if self.period is not None and self.call_cnt % self.period == 0:
@@ -51,26 +55,29 @@ class DeltaDifferenceDelegate(TargetEmbedding):
             @tf.custom_gradient
             def __delegate(_x, _y):
                 x = bk.cast(_x, dtype)
-                if self.io_aligned:
+                if 1 == self._target_dim:
                     y = bk.cast(_y, dtype) * bk.ones_like(x)
                 else:
                     y = bk.reshape(bk.expand_dims(bk.cast(_y, dtype), 1) * bk.ones_like(bk.expand_dims(x, -1)),
                                    (-1, self.input_dim * self._target_dim))
 
                 def _grad(dy):
-                    seg_indices = self._calc_seg_indices(x, self.moving_min, self.moving_max)
+                    seg_indices = self._calc_seg_indices(x, self.cur_min, self.cur_max)
                     seg_embeddings = bk.gather(self.embedding, seg_indices)
                     self._update_embedding(x, y, seg_indices, seg_embeddings)
 
                     dys = diff_by_col_num(self.embedding, col_num=self.seg_num, direction='both')
                     cur_dy = bk.gather((dys[0] + dys[1]) / 2, seg_indices)
-                    if self.io_aligned:
+                    if 1 == self._target_dim:
                         cur_dy *= dy
                     else:
                         cur_dy = bk.reshape(cur_dy, (-1, self.input_dim, self._target_dim)) * bk.expand_dims(dy, 1)
                         cur_dy = bk.sum(cur_dy, axis=-1) / self.input_dim
 
-                    cur_dy *= self.seg_num / (self.moving_max - self.moving_min)
+                    gap = self.cur_max - self.cur_min
+                    gap_ind = gap < self.val_epsilon
+                    cur_dy *= self.seg_num / (
+                        bk.cast(gap_ind, dy.dtype) * self.val_epsilon + bk.cast(~gap_ind, dy.dtype) * gap)
                     return cur_dy * self.grad_ease, dy
 
                 return _y, _grad
@@ -169,7 +176,7 @@ def epsilon_grad(x, epsilon=1e-3):
         def __grad(dy):
             return (bk.cast((dy <= -epsilon) | (dy >= epsilon), dy.dtype) * dy +
                     epsilon * (bk.cast(0 == dy, dy.dtype) * bk.sign(_x) + bk.cast((dy > 0) & (dy < epsilon), dy.dtype)
-                               - bk.cast((dy < 0) & (dy > -epsilon), dy.dtype)))
+                               + bk.cast((dy < 0) & (dy > -epsilon), dy.dtype)))
 
         return _x, __grad
 

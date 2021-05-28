@@ -10,12 +10,12 @@ from ml2lm.calc.model.units.callbacks import *
 class TnnGenerator(object):
     def __init__(self, x, cat_in_dims=None, cat_out_dims=None, embed_norm_handler=BatchNormalization, embed_dropout=0.2,
                  embed_dropout_handler=Dropout, add_cat_src=False, seg_class=SegTriangleLayer, seg_x_val_range=(0, 1),
-                 seg_func=seu, feat_seg_bin=False, feat_only_bin=False, scale_n=0, scope_type='global',
-                 bundle_scale=False, seg_dropout=0.1, seg_dropout_handler=Dropout, seg_flag=True, seg_out_dims=None,
-                 add_seg_src=True, seg_num_flag=True, num_segs=None, rel_conf=None, rel_bn_num_flag=False,
-                 rel_embed_src_flag=False, hidden_units=(320, 64), hidden_activation=seu, hidden_dropouts=(0.3, 0.05),
-                 hidden_dropout_handler=Dropout, hid_bn_num_flag=False, output_activation=None, loss='mse',
-                 init_lr=1e-3, nn_metrics=None, **kwargs):
+                 seg_func=seu, feat_seg_bin=False, feat_only_bin=False, feat_bin_handler=None, scale_n=0,
+                 scope_type='global', bundle_scale=False, seg_dropout=0.1, seg_dropout_handler=Dropout, seg_flag=True,
+                 seg_out_dims=None, add_seg_src=True, seg_num_flag=True, num_segs=None, rel_conf=None,
+                 rel_bn_num_flag=False, rel_embed_src_flag=False, hidden_units=(320, 64), hidden_activation=seu,
+                 hidden_dropouts=(0.3, 0.05), hidden_dropout_handler=Dropout, hid_bn_num_flag=False,
+                 output_activation=None, loss='mse', init_lr=1e-3, nn_metrics=None, **kwargs):
         self.inputs = {k: Input(shape=[v.shape[-1] if len(v.shape) > 1 else 1], name=k) for k, v in x.items()}
 
         self.cat_in_dims = cat_in_dims
@@ -30,6 +30,7 @@ class TnnGenerator(object):
         self.seg_func = seg_func
         self.feat_seg_bin = feat_seg_bin
         self.feat_only_bin = feat_only_bin
+        self.feat_bin_handler = feat_bin_handler
         self.scale_n = scale_n
         self.scope_type = scope_type
         self.bundle_scale = bundle_scale
@@ -68,7 +69,7 @@ class TnnGenerator(object):
         self._hid_output = None
         self._output = None
 
-        self._main_generator = None
+        self._main_generator = self
         self._generators = [self]
 
     def compose(self, generators):
@@ -108,17 +109,19 @@ class TnnGenerator(object):
             if self.scale_n > 0 or self.bundle_scale:
                 segment = WaveletWrapper(out_dim, input_val_range=self.seg_x_val_range, seg_func=self.seg_func,
                                          include_seg_bin=self.feat_seg_bin, only_seg_bin=self.feat_only_bin,
-                                         seg_class=self.seg_class, scale_n=self.scale_n, scope_type=self.scope_type,
+                                         bin_handler=self.feat_bin_handler, seg_class=self.seg_class,
+                                         scale_n=self.scale_n, scope_type=self.scope_type,
                                          bundle_scale=self.bundle_scale)(seg)
             else:
                 segment = self.seg_class(out_dim, input_val_range=self.seg_x_val_range, seg_func=self.seg_func,
-                                         include_seg_bin=self.feat_seg_bin, only_seg_bin=self.feat_only_bin)(seg)
+                                         include_seg_bin=self.feat_seg_bin, only_seg_bin=self.feat_only_bin,
+                                         bin_handler=self.feat_bin_handler)(seg)
             segments.append(segment)
         return segments
 
     def _build_seg(self):
         seg_input, num_input = self.inputs.get('segs'), self.inputs.get('nums')
-        segments = self._get_segments(seg_input, self.seg_out_dims) if self.seg_flag and seg_input is not None else[]
+        segments = self._get_segments(seg_input, self.seg_out_dims) if self.seg_flag and seg_input is not None else []
         segments += self._get_segments(num_input, self.num_segs) if self.seg_num_flag and num_input is not None else []
         self._seg_src = concatenate(segments) if segments else None
 
@@ -302,10 +305,10 @@ class TnnWithTEGenerator(TnnGenerator):
         self._te_num = None
 
     def _build_te_cat(self):
-        if self._cat_src is not None and self.te_cat_conf is not None:
+        if self._main_generator._cat_src is not None and self.te_cat_conf is not None:
             target_input = self.inputs['target']
             te = self.TE(**self.te_cat_conf)
-            self._te_cat = te([self._cat_src, target_input])
+            self._te_cat = te([self._main_generator._cat_src, target_input])
 
             if self.bn_te_cat_flag:
                 self._te_cat = self.te_norm_handler()(self._te_cat)
@@ -313,10 +316,10 @@ class TnnWithTEGenerator(TnnGenerator):
                 self._te_cat = self.te_dropout_handler(self.te_cat_dp)(self._te_cat)
 
     def _build_te_num(self):
-        if self._num_src is not None and self.te_num_conf is not None:
+        if self._main_generator._num_src is not None and self.te_num_conf is not None:
             target_input = self.inputs['target']
             te = self.TE(**self.te_num_conf)
-            self._te_num = te([self._num_src, target_input])
+            self._te_num = te([self._main_generator._num_src, target_input])
 
             if self.bn_te_num_flag:
                 self._te_num = self.te_norm_handler()(self._te_num)
@@ -410,7 +413,7 @@ class TnnWithSEGenerator(TnnGenerator):
         if feat_size > self.cur_phase:
             self.se_feat_idx_list = self.se_feat_idx_list[:self.cur_phase]
 
-        inputs = self._merge([self.inputs.get('cats'), self._num_src])
+        inputs = self._merge([self.inputs.get('cats'), self._main_generator._num_src])
         self.SE = SegEmbedding(seg_nums=self.se_seg_nums, feat_idx_list=self.se_feat_idx_list,
                                embed_trainable_list=self.embed_trainable_list, input_val_range=self.se_input_val_range,
                                out_dim_calcor=self.out_dim_calcor, max_param_num=self.max_param_num,

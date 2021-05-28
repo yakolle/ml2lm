@@ -1,7 +1,6 @@
 import numpy as np
 import tensorflow as tf
 from keras import backend as bk, initializers, regularizers, constraints
-from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
 
@@ -95,7 +94,7 @@ class TargetEmbedding(AdjustableLayer):
 
         return (bk.cast(indices < start, dtype) * _embedding + bk.cast(indices == start, dtype) * _embedding1
                 + bk.cast(indices == seg_num - 1, dtype) * _embedding_1 + bk.cast(
-            (indices > start) & (indices < seg_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
+                    (indices > start) & (indices < seg_num - 1), dtype) * (_embedding1 + _embedding_1) / 2)
 
     def adjust(self):
         dtype = self.embedding.dtype
@@ -107,7 +106,7 @@ class TargetEmbedding(AdjustableLayer):
 
         inv_seg_scale = (self.cur_max - self.cur_min) / self.seg_num
         x = bk.expand_dims(bk.arange(0, self.seg_num, dtype=dtype), axis=-1) * inv_seg_scale + (
-            self.cur_min + self.val_epsilon * inv_seg_scale)
+                self.cur_min + self.val_epsilon * inv_seg_scale)
         x = bk.concatenate([x, x + (1. - 2 * self.val_epsilon) * inv_seg_scale], axis=0)
         y = bk.transpose(bk.reshape(self.embedding, (self.input_dim * self._target_dim, -1)))[int(self.mask_zero):]
         y = bk.concatenate([y, y], axis=0)

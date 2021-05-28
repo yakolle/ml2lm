@@ -3,7 +3,7 @@ from keras.engine import Layer, InputSpec
 
 
 class ScaleLayer(Layer):
-    def __init__(self, momentum=0.99, min_trainable=False, max_trainable=False, epsilon=1e-3,
+    def __init__(self, momentum=0.99, min_trainable=True, max_trainable=True, epsilon=1e-3,
                  moving_min_initializer='zeros', moving_max_initializer='ones', min_initializer='zeros',
                  max_initializer='ones', min_regularizer=None, max_regularizer=None, min_constraint=None,
                  max_constraint=None, **kwargs):

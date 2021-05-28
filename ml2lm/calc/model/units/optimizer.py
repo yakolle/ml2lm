@@ -1,8 +1,9 @@
+import numpy as np
 import tensorflow as tf
 from keras import backend as bk
-from keras.layers import Embedding
 
-from ml2lm.calc.model.units.embed import TargetEmbedding
+from ml2lm.calc.model.units.embed import TargetEmbedding, SegEmbedding
+from ml2lm.calc.model.units.norm import ScaleLayer
 
 
 def diff(x, direction='both'):
@@ -74,10 +75,6 @@ class DeltaDifferenceDelegate(TargetEmbedding):
                         cur_dy = bk.reshape(cur_dy, (-1, self.input_dim, self._target_dim)) * bk.expand_dims(dy, 1)
                         cur_dy = bk.sum(cur_dy, axis=-1) / self.input_dim
 
-                    gap = self.cur_max - self.cur_min
-                    gap_ind = gap < self.val_epsilon
-                    cur_dy *= self.seg_num / (
-                        bk.cast(gap_ind, dy.dtype) * self.val_epsilon + bk.cast(~gap_ind, dy.dtype) * gap)
                     return cur_dy * self.grad_ease, dy
 
                 return _y, _grad
@@ -97,15 +94,16 @@ class DeltaDifferenceDelegate(TargetEmbedding):
         return input_shape[-1]
 
 
-def node_embedding(node, embed_in_dim, embed_out_dim, dd_delegate=None):
-    y = Embedding(embed_in_dim, embed_out_dim)(bk.cast(bk.clip(node, 0, embed_in_dim), 'int32'))
-    y = bk.reshape(y, (-1, bk.prod(bk.shape(y)[1:])))
+def node_embedding(node, ne_seg_num, dd_delegate=None):
+    ne_units = node.shape[1]
+    node = ScaleLayer(min_trainable=False, max_trainable=False)(node)
+    y = SegEmbedding([ne_seg_num] * ne_units, [np.expand_dims(np.array(range(ne_units)), -1)])(node)[0]
     if dd_delegate is None:
         dd_delegate = DeltaDifferenceDelegate(delta_x_num=100, grad_ease=1., io_aligned=False)
     return dd_delegate([node, y])
 
 
-def unit_step(x, step_point=0., grad_range=(-0.5, 0.5), grad_ease=1.):
+def make_unit_step(step_point=0., grad_range=(-0.01, 0.01), grad_ease=1.):
     @tf.custom_gradient
     def _unit_step(_x):
         y = bk.cast(_x >= step_point, _x.dtype)
@@ -114,16 +112,16 @@ def unit_step(x, step_point=0., grad_range=(-0.5, 0.5), grad_ease=1.):
             l, r = grad_range
             h = 1. / (r - l)
             k = h / (r - l)
-            cur_dy = h - bk.abs(l + r - 2 * x) * k
+            cur_dy = h - bk.abs(l + r - 2 * _x) * k
             cur_dy = bk.cast((_x >= l) & (_x <= r), _x.dtype) * cur_dy
             return dy * cur_dy * grad_ease
 
         return y, __grad
 
-    return _unit_step(x)
+    return _unit_step
 
 
-def unit_box(x, box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75)), delta_x_num=(10, 10), grad_ease=1.):
+def make_unit_box(box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75)), delta_x_num=(10, 10), grad_ease=1.):
     @tf.custom_gradient
     def _unit_box(_x):
         y = bk.cast((_x >= box_range[0]) & (_x <= box_range[1]), _x.dtype)
@@ -150,10 +148,10 @@ def unit_box(x, box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75))
 
         return y, __grad
 
-    return _unit_box(x)
+    return _unit_box
 
 
-def gather_in_flow(embed, indices, embed_in_dim):
+def make_gather_in_flow(embed_in_dim):
     @tf.custom_gradient
     def _gather(_embed, _indices):
         y = bk.gather(_embed, bk.cast(bk.clip(_indices, 0, embed_in_dim), 'int32'))
@@ -167,17 +165,4 @@ def gather_in_flow(embed, indices, embed_in_dim):
 
         return y, __grad
 
-    return _gather(embed, indices)
-
-
-def epsilon_grad(x, epsilon=1e-3):
-    @tf.custom_gradient
-    def _epsilon_grad(_x):
-        def __grad(dy):
-            return (bk.cast((dy <= -epsilon) | (dy >= epsilon), dy.dtype) * dy +
-                    epsilon * (bk.cast(0 == dy, dy.dtype) * bk.sign(_x) + bk.cast((dy > 0) & (dy < epsilon), dy.dtype)
-                               + bk.cast((dy < 0) & (dy > -epsilon), dy.dtype)))
-
-        return _x, __grad
-
-    return _epsilon_grad(x)
+    return _gather

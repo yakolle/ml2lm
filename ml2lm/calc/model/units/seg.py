@@ -27,7 +27,7 @@ class SegLayer(Layer):
 
 class SegTriangleLayer(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, win_func=bk.abs, pos_fixed=True,
-                 seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, **kwargs):
+                 seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, bin_handler=None, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -52,11 +52,12 @@ class SegTriangleLayer(SegLayer):
 
         self.include_seg_bin = include_seg_bin
         self.only_seg_bin = only_seg_bin
+        self.bin_handler = bin_handler
         if self.only_seg_bin:
             self.include_seg_bin = True
-            self.seg_width_fixed = True
+            if self.bin_handler is None:
+                self.seg_width_fixed = True
 
-        self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -73,51 +74,33 @@ class SegTriangleLayer(SegLayer):
             middle_pos = np.linspace(left_pos, right_pos, self.seg_num - 1)
             self.middle_pos = self.add_weight(shape=(self.seg_num - 1,), name=f'{self.name}/middle_pos',
                                               initializer=Constant(value=middle_pos), trainable=not self.pos_fixed)
-        else:
-            self.middle_pos = None
-        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
-                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
-
-        if self.seg_num > 2 and not self.only_seg_bin:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 1,),
                                                     initializer=Constant(value=self.seg_width),
                                                     name=f'{self.name}/middle_seg_width',
                                                     trainable=not self.seg_width_fixed)
         else:
+            self.middle_pos = None
             self.middle_seg_width = None
+        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
+                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
 
-        self.input_spec = InputSpec(min_ndim=2, axes={-1: 1})
         self.built = True
 
     def get_segs(self, inputs, **kwargs):
         outputs = []
 
-        left_out = middle_tmp_out = right_out = None
+        left_out = self.left_pos - inputs
+        right_out = inputs - self.right_pos
+        if self.middle_pos is not None:
+            middle_out = self.middle_seg_width - self.win_func(inputs - self.middle_pos)
+            output = bk.concatenate([left_out, middle_out, right_out])
+        else:
+            output = bk.concatenate([left_out, right_out])
 
         if not self.only_seg_bin:
-            left_out = self.left_pos - inputs
-            middle_tmp_out = None if self.middle_pos is None else -self.win_func(inputs - self.middle_pos)
-            middle_out = None if self.middle_pos is None else middle_tmp_out + self.middle_seg_width
-            right_out = inputs - self.right_pos
-
-            if self.middle_pos is not None:
-                output = bk.concatenate([left_out, middle_out, right_out])
-            else:
-                output = bk.concatenate([left_out, right_out])
             outputs.append(self.seg_func(output))
-
         if self.include_seg_bin:
-            left_out = self.left_pos - inputs if left_out is None else left_out
-            middle_tmp_out = None if self.middle_pos is None else -self.win_func(
-                inputs - self.middle_pos) if middle_tmp_out is None else middle_tmp_out
-            middle_out = None if self.middle_pos is None else middle_tmp_out + self.seg_width
-            right_out = inputs - self.right_pos if right_out is None else right_out
-
-            if self.middle_pos is not None:
-                output = bk.concatenate([left_out, middle_out, right_out])
-            else:
-                output = bk.concatenate([left_out, right_out])
-            outputs.append(bk.cast(output > 0, inputs.dtype))
+            outputs.append(bk.cast(output > 0, inputs.dtype) if self.bin_handler is None else self.bin_handler(output))
 
         return outputs
 
@@ -148,7 +131,8 @@ class SegTriangleLayer(SegLayer):
             'pos_fixed': self.pos_fixed,
             'seg_width_fixed': self.seg_width_fixed,
             'include_seg_bin': self.include_seg_bin,
-            'only_seg_bin': self.only_seg_bin
+            'only_seg_bin': self.only_seg_bin,
+            'bin_handler': self.bin_handler
         }
         base_config = super(SegTriangleLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -156,7 +140,7 @@ class SegTriangleLayer(SegLayer):
 
 class SegRightAngleLayer(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, dive_height=20., pos_fixed=True,
-                 seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, **kwargs):
+                 seg_width_fixed=False, include_seg_bin=False, only_seg_bin=False, bin_handler=None, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -181,11 +165,12 @@ class SegRightAngleLayer(SegLayer):
 
         self.include_seg_bin = include_seg_bin
         self.only_seg_bin = only_seg_bin
+        self.bin_handler = bin_handler
         if self.only_seg_bin:
             self.include_seg_bin = True
-            self.seg_width_fixed = True
+            if self.bin_handler is None:
+                self.seg_width_fixed = True
 
-        self.input_spec = InputSpec(min_ndim=2)
         self.supports_masking = True
 
     def build(self, input_shape):
@@ -202,53 +187,34 @@ class SegRightAngleLayer(SegLayer):
             middle_pos = np.linspace(left_pos, right_pos - self.seg_width, self.seg_num - 2)
             self.middle_pos = self.add_weight(shape=(self.seg_num - 2,), name=f'{self.name}/middle_pos',
                                               initializer=Constant(value=middle_pos), trainable=not self.pos_fixed)
-        else:
-            self.middle_pos = None
-        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
-                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
-
-        if self.seg_num > 2 and not self.only_seg_bin:
             self.middle_seg_width = self.add_weight(shape=(self.seg_num - 2,),
                                                     initializer=Constant(value=self.seg_width),
                                                     name=f'{self.name}/middle_seg_width',
                                                     trainable=not self.seg_width_fixed)
         else:
+            self.middle_pos = None
             self.middle_seg_width = None
+        self.right_pos = self.add_weight(shape=(1,), initializer=Constant(value=right_pos),
+                                         name=f'{self.name}/right_pos', trainable=not self.pos_fixed)
 
-        self.input_spec = InputSpec(min_ndim=2, axes={-1: 1})
         self.built = True
 
     def get_segs(self, inputs, **kwargs):
         outputs = []
 
-        left_out = middle_tmp_out = right_out = None
+        left_out = self.left_pos - inputs
+        right_out = inputs - self.right_pos
+        if self.middle_pos is not None:
+            middle_out = self.seg_func(inputs - self.middle_pos) - self.dive_height * self.seg_func(
+                inputs - self.middle_pos - self.middle_seg_width)
+            output = bk.concatenate([left_out, middle_out, right_out])
+        else:
+            output = bk.concatenate([left_out, right_out])
 
         if not self.only_seg_bin:
-            left_out = self.left_pos - inputs
-            middle_tmp_out = None if self.middle_pos is None else self.seg_func(inputs - self.middle_pos)
-            middle_out = None if self.middle_pos is None else middle_tmp_out - self.dive_height * self.seg_func(
-                inputs - self.middle_pos - self.middle_seg_width)
-            right_out = inputs - self.right_pos
-
-            if self.middle_pos is not None:
-                output = bk.concatenate([left_out, middle_out, right_out])
-            else:
-                output = bk.concatenate([left_out, right_out])
             outputs.append(self.seg_func(output))
-
         if self.include_seg_bin:
-            left_out = self.left_pos - inputs if left_out is None else left_out
-            middle_tmp_out = None if self.middle_pos is None else self.seg_func(
-                inputs - self.middle_pos) if middle_tmp_out is None else middle_tmp_out
-            middle_out = None if self.middle_pos is None else middle_tmp_out * bk.sign(
-                self.middle_pos + self.seg_width - inputs)
-            right_out = inputs - self.right_pos if right_out is None else right_out
-
-            if self.middle_pos is not None:
-                output = bk.concatenate([left_out, middle_out, right_out])
-            else:
-                output = bk.concatenate([left_out, right_out])
-            outputs.append(bk.cast(output > 0, inputs.dtype))
+            outputs.append(bk.cast(output > 0, inputs.dtype) if self.bin_handler is None else self.bin_handler(output))
 
         return outputs
 
@@ -271,7 +237,8 @@ class SegRightAngleLayer(SegLayer):
             'pos_fixed': self.pos_fixed,
             'seg_width_fixed': self.seg_width_fixed,
             'include_seg_bin': self.include_seg_bin,
-            'only_seg_bin': self.only_seg_bin
+            'only_seg_bin': self.only_seg_bin,
+            'bin_handler': self.bin_handler
         }
         base_config = super(SegRightAngleLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -279,7 +246,7 @@ class SegRightAngleLayer(SegLayer):
 
 class BinSegLayer(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, include_seg_bin=False,
-                 only_seg_bin=False, **kwargs):
+                 only_seg_bin=False, bin_handler=None, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -294,9 +261,9 @@ class BinSegLayer(SegLayer):
         self.pos_fixed = pos_fixed
         self.include_seg_bin = include_seg_bin
         self.only_seg_bin = only_seg_bin
+        self.bin_handler = bin_handler
         if self.only_seg_bin:
             self.include_seg_bin = True
-            self.pos_fixed = True
 
         self.left_pos = None
         self.right_pos = None
@@ -321,8 +288,12 @@ class BinSegLayer(SegLayer):
             outputs.append(self.seg_func(left_out))
             outputs.append(self.seg_func(right_out))
         if self.include_seg_bin:
-            outputs.append(bk.cast(left_out > 0, inputs.dtype))
-            outputs.append(bk.cast(right_out > 0, inputs.dtype))
+            if self.bin_handler is None:
+                outputs.append(bk.cast(left_out > 0, inputs.dtype))
+                outputs.append(bk.cast(right_out > 0, inputs.dtype))
+            else:
+                outputs.append(self.bin_handler(left_out))
+                outputs.append(self.bin_handler(right_out))
 
         return outputs
 
@@ -343,7 +314,8 @@ class BinSegLayer(SegLayer):
             'seg_func': self.seg_func,
             'pos_fixed': self.pos_fixed,
             'include_seg_bin': self.include_seg_bin,
-            'only_seg_bin': self.only_seg_bin
+            'only_seg_bin': self.only_seg_bin,
+            'bin_handler': self.bin_handler
         }
         base_config = super(BinSegLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
@@ -351,8 +323,8 @@ class BinSegLayer(SegLayer):
 
 class WaveletWrapper(SegLayer):
     def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, seg_width_fixed=False,
-                 include_seg_bin=False, only_seg_bin=False, seg_class=SegTriangleLayer, scale_n=3, scope_type='global',
-                 bundle_scale=True, **kwargs):
+                 include_seg_bin=False, only_seg_bin=False, bin_handler=None, seg_class=SegTriangleLayer, scale_n=3,
+                 scope_type='global', bundle_scale=True, **kwargs):
         assert seg_num >= 2
 
         wl_args = {}
@@ -361,7 +333,7 @@ class WaveletWrapper(SegLayer):
             wl_args['input_shape'] = kwargs['input_shape']
         kwargs.update({'input_val_range': input_val_range, 'seg_func': seg_func, 'pos_fixed': pos_fixed,
                        'seg_width_fixed': seg_width_fixed, 'include_seg_bin': include_seg_bin,
-                       'only_seg_bin': only_seg_bin})
+                       'only_seg_bin': only_seg_bin, 'bin_handler': bin_handler})
 
         super(WaveletWrapper, self).__init__(**wl_args)
         self.seg_class = seg_class

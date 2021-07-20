@@ -243,6 +243,40 @@ class FlipModel(Callback):
                 self._merge(fr)
 
 
+def flip_data(x, y, p, p_seg_num=100, flip_with='max', momentum=0.98, add_src=True):
+    p_bounds = np.linspace(np.min(p), np.max(p), p_seg_num + 1)
+    p_bounds[-1] += 1.
+
+    pys = [y] if add_src else []
+    is_dict = isinstance(x, dict)
+    if not is_dict:
+        x = {'nums': x}
+    pxs = {k: [v] if add_src else [] for k, v in x.items()}
+
+    for i in range(p_seg_num):
+        pl, pr = p_bounds[i], p_bounds[i + 1]
+        pm = (p >= pl) & (p < pr)
+        pys.append(y[pm])
+        for k, v in x.items():
+            pv = v[pm]
+            if k in ['segs', 'nums']:
+                if 'max' == flip_with:
+                    fv = np.max(pv, axis=0)
+                elif 'min' == flip_with:
+                    fv = np.min(pv, axis=0)
+                else:
+                    fv = np.mean(pv, axis=0)
+                    if 'flip' == flip_with:
+                        fv = 2 * fv - pv
+                pv = momentum * pv + (1. - momentum) * fv
+            pxs[k].append(pv)
+
+    fxs = {k: np.concatenate(vs) for k, vs in pxs.items()}
+    if not is_dict:
+        fxs = fxs['nums']
+    return fxs, np.concatenate(pys)
+
+
 def make_evaluate_handler(metric_handler, metric_bias=0., metric_scale=1.):
     def _evaluate_handler(ys, ps):
         scores = [metric_scale * (metric_handler(_y, _p) + metric_bias) for _y, _p in zip(ys, ps)]

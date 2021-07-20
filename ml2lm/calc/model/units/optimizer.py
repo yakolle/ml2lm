@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 from keras import backend as bk
 
-from ml2lm.calc.model.units.embed import TargetEmbedding, SegEmbedding
+from ml2lm.calc.model.units.embed import TargetEmbedding, SegEmbedding, TargetEmbedding4CPU, TargetEmbedding4TPU
 from ml2lm.calc.model.units.norm import ScaleLayer
 
 
@@ -94,6 +94,14 @@ class DeltaDifferenceDelegate(TargetEmbedding):
         return input_shape[-1]
 
 
+class DeltaDifferenceDelegate4CPU(DeltaDifferenceDelegate, TargetEmbedding4CPU):
+    pass
+
+
+class DeltaDifferenceDelegate4TPU(DeltaDifferenceDelegate, TargetEmbedding4TPU):
+    pass
+
+
 def node_embedding(node, ne_seg_num, dd_delegate=None):
     ne_units = node.shape[1]
     node = ScaleLayer(min_trainable=False, max_trainable=False)(node)
@@ -151,18 +159,21 @@ def make_unit_box(box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75
     return _unit_box
 
 
-def make_gather_in_flow(embed_in_dim):
-    @tf.custom_gradient
-    def _gather(_embed, _indices):
-        y = bk.gather(_embed, bk.cast(bk.clip(_indices, 0, embed_in_dim), 'int32'))
-        in_dim, out_dim = bk.shape(_indices)[-1], bk.shape(_embed)[-1]
-        y = bk.reshape(y, (-1, in_dim * out_dim))
+def make_gather_in_flow(embed_in_dim=None):
+    def _gather_in_flow(_embed, _indices):
+        y = bk.gather(_embed,
+                      bk.cast(_indices if embed_in_dim is None else bk.clip(_indices, 0, embed_in_dim), 'int32'))
 
-        def __grad(dy):
-            cur_dy = bk.reshape(dy, (-1, in_dim, out_dim))
-            cur_dy = bk.sum(cur_dy, axis=-1) / bk.cast(in_dim, cur_dy.dtype)
-            return dy, cur_dy
+        @tf.custom_gradient
+        def _gather(__indices):
+            in_dim = bk.shape(__indices)
+            in_dim = 1 if 1 == len(in_dim) else in_dim[-1]
 
-        return y, __grad
+            def __grad(dy):
+                dy = bk.sum(dy, axis=-1) / bk.cast(in_dim, dy.dtype)
 
-    return _gather
+            return y, __grad
+
+        return (y + _gather(_indices)) / 2
+
+    return _gather_in_flow

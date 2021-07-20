@@ -245,8 +245,8 @@ class SegRightAngleLayer(SegLayer):
 
 
 class BinSegLayer(SegLayer):
-    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, include_seg_bin=False,
-                 only_seg_bin=False, bin_handler=None, **kwargs):
+    def __init__(self, seg_num, input_val_range=(0, 1), seg_func=seu, pos_fixed=True, include_seg_bin=True,
+                 only_seg_bin=True, bin_handler=None, **kwargs):
         assert seg_num >= 2
 
         if 'input_shape' not in kwargs and 'input_dim' in kwargs:
@@ -264,6 +264,8 @@ class BinSegLayer(SegLayer):
         self.bin_handler = bin_handler
         if self.only_seg_bin:
             self.include_seg_bin = True
+        if self.bin_handler is not None:
+            self.pos_fixed = False
 
         self.left_pos = None
         self.right_pos = None

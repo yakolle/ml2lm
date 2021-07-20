@@ -1,5 +1,7 @@
+import numpy as np
 from keras import backend as bk, initializers, regularizers, constraints, activations
 from keras.engine.topology import Layer, InputSpec
+from keras.initializers import Constant
 
 
 def labs(x):
@@ -253,7 +255,7 @@ class BiCrossLayer(Layer):
     def get_config(self):
         config = {
             'factor_rank': self.factor_rank,
-            'trans_func': self.trans_func,
+            'trans_funcs': self.trans_func,
             'op_func': self.op_func,
             'rel_types': self.rel_types,
             'use_bias': self.use_bias,
@@ -280,28 +282,95 @@ class BiRelLayer(BiCrossLayer):
         return super(BiRelLayer, self).compute_output_shape([input_shape, input_shape])
 
 
+class ParameterizedHandler(Layer):
+    def __init__(self, handler, param_num, param_initializers=None, **kwargs):
+        super(ParameterizedHandler, self).__init__(**kwargs)
+        self.supports_masking = True
+
+        self.handler = handler
+        self.param_num = param_num
+        self.param_initializers = param_initializers
+        if self.param_initializers is None:
+            self.param_initializers = [None] * self.param_num
+
+        self.params = []
+
+    def build(self, input_shape):
+        input_dim = input_shape[-1]
+        for i in range(self.param_num):
+            self.params.append(self.add_weight(name=f'param{i}', shape=(input_dim,),
+                                               initializer=self.param_initializers[i]))
+        self.built = True
+
+    def call(self, inputs, **kwargs):
+        return self.handler(inputs, *self.params)
+
+    def get_config(self):
+        config = {
+            'handler': self.handler,
+            'param_num': self.param_num,
+            'param_initializers': self.param_initializers
+        }
+        base_config = super(ParameterizedHandler, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+def make_mod_operator(k=1., n=1.):
+    phr = ParameterizedHandler(lambda _x, _k, _n: (_k * _x) % _n, param_num=2,
+                               param_initializers=[Constant(k), Constant(n)])
+
+    def _mod(x):
+        return phr(x)
+
+    return _mod
+
+
+def make_sin_operator(k=1., b=0.):
+    phr = ParameterizedHandler(lambda _x, _k, _b: bk.sin((_k * _x + _b) * np.pi / 2), param_num=2,
+                               param_initializers=[Constant(k), Constant(b)])
+
+    def _sin(x):
+        return phr(x)
+
+    return _sin
+
+
 class ShadowLayer(Layer):
-    def __init__(self, trans_func=lsm, **kwargs):
-        if 'input_shape' not in kwargs and 'input_dim' in kwargs:
-            kwargs['input_shape'] = (kwargs.pop('input_dim'),)
+    def __init__(self, trans_handler=lsm, coeff=-0.01, coeff_fixed=False, shadow_pinned=False, merge_type='concat',
+                 **kwargs):
         super(ShadowLayer, self).__init__(**kwargs)
         self.supports_masking = True
 
-        self.trans_func = trans_func
+        self.trans_handler = trans_handler if isinstance(trans_handler, (tuple, list)) else [trans_handler]
+        self.coeff = coeff if isinstance(coeff, (tuple, list)) else ([coeff] * len(self.trans_handler))
+        self.coeff_fixed = coeff_fixed
+        self.shadow_pinned = shadow_pinned
+        self.merge_type = merge_type
 
-        self.input_spec = InputSpec(min_ndim=2)
+        self.scales = []
+
+    def build(self, input_shape):
+        self.scales = [self.add_weight(name=f'scale{i}', shape=(1,), initializer=Constant(k),
+                                       trainable=not self.coeff_fixed) for i, k in enumerate(self.coeff)]
+        self.built = True
 
     def call(self, inputs, **kwargs):
-        return bk.concatenate([inputs, self.trans_func(bk.stop_gradient(inputs))])
+        outputs = []
+        for i, thr in enumerate(self.trans_handler):
+            shadow = bk.stop_gradient(inputs) if self.shadow_pinned else inputs
+            outputs.append(self.scales[i] * (shadow if thr is None else thr(shadow)))
 
-    def compute_output_shape(self, input_shape):
-        assert input_shape and 2 == len(input_shape)
-        assert input_shape[-1]
-        output_shape = list(input_shape)
-        output_shape[-1] *= 2
-        return tuple(output_shape)
+        if 1 == len(outputs):
+            return outputs[0]
+        return bk.concatenate(outputs) if 'concat' == self.merge_type else bk.sum(outputs, axis=0)
 
     def get_config(self):
-        config = {'trans_func': self.trans_func}
+        config = {
+            'trans_handler': self.trans_handler,
+            'coeff': self.coeff,
+            'coeff_fixed': self.coeff_fixed,
+            'shadow_pinned': self.shadow_pinned,
+            'merge_type': self.merge_type
+        }
         base_config = super(ShadowLayer, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

@@ -1,8 +1,10 @@
 import numpy as np
 import tensorflow as tf
 from keras import backend as bk, initializers, regularizers, constraints
+from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
+from ml2lm.calc.model.units.optimizer import make_gather_in_flow
 
 
 class TargetEmbedding(AdjustableLayer):
@@ -246,7 +248,8 @@ def log_out_dim_calcor(seg_nums, max_param_num=None):
 class SegEmbedding(AdjustableLayer):
     def __init__(self, seg_nums, feat_idx_list, embed_trainable_list=None, input_val_range=(0., 1.),
                  out_dim_calcor=log_out_dim_calcor, max_param_num=int(1e6), period=100, pave_momentum=0.5,
-                 embeddings_initializer='uniform', embeddings_regularizer=None, embeddings_constraint=None, **kwargs):
+                 index_learnable=False, embeddings_initializer='uniform', embeddings_regularizer=None,
+                 embeddings_constraint=None, **kwargs):
         super(SegEmbedding, self).__init__(**kwargs)
         self.supports_masking = True
 
@@ -258,6 +261,7 @@ class SegEmbedding(AdjustableLayer):
         self.max_param_num = max_param_num
         self.period = period
         self.pave_momentum = pave_momentum
+        self.index_learnable = index_learnable
 
         self.embeddings_initializer = initializers.get(embeddings_initializer)
         self.embeddings_regularizer = regularizers.get(embeddings_regularizer)
@@ -285,6 +289,13 @@ class SegEmbedding(AdjustableLayer):
 
         self.call_cnt = None
 
+        self.unique_supported = True
+        try:
+            from tensorflow.python.tpu import tpu
+            self.unique_supported = not tpu.is_tpu_strategy(tf.distribute.get_strategy())
+        except ModuleNotFoundError:
+            self.unique_supported = True
+
     def _add_embeddings(self, phase):
         feats_indices = self.feat_idx_list[phase]
         for i, feats_idx in enumerate(feats_indices):
@@ -310,8 +321,9 @@ class SegEmbedding(AdjustableLayer):
 
     @staticmethod
     def _calc_indices(val, min_val, max_val, seg_num, seg_num_mul):
-        seg_scale = bk.cast(seg_num, val.dtype) / (max_val - min_val)
-        seg_indices = bk.clip(bk.cast(seg_scale * (val - min_val), 'int32'), 0, seg_num - 1)
+        seg_num, seg_num_mul = bk.cast(seg_num, val.dtype), bk.cast(seg_num_mul, val.dtype)
+        seg_scale = seg_num / (max_val - min_val)
+        seg_indices = bk.clip(seg_scale * (val - min_val), 0., seg_num - 1.)
         seg_indices = bk.squeeze(bk.dot(seg_indices, seg_num_mul), -1)
 
         return seg_indices
@@ -353,7 +365,10 @@ class SegEmbedding(AdjustableLayer):
                     self.max_val_list[i][j], self.seg_num_list[i][j], self.seg_num_mul_list[i][j])
                 if trainable:
                     indices[i].append(inds)
-                cur_outputs.append(bk.gather(self.embedding_list[i][j], inds))
+                if self.index_learnable:
+                    cur_outputs.append(make_gather_in_flow()(self.embedding_list[i][j], inds))
+                else:
+                    cur_outputs.append(bk.gather(self.embedding_list[i][j], bk.cast(inds, 'int32')))
             outputs.append(bk.concatenate(cur_outputs) if len(cur_outputs) > 1 else cur_outputs[0])
 
         if training:
@@ -361,11 +376,15 @@ class SegEmbedding(AdjustableLayer):
 
             for i in range(self.phase):
                 for j, inds in enumerate(indices[i]):
-                    ind, _, cnts = tf.unique_with_counts(bk.flatten(inds))
-
                     update_cnt = self.update_cnt_list[i][j]
-                    tmp_cnt = tf.sparse.to_dense(tf.sparse.reorder(tf.SparseTensor(bk.expand_dims(
-                        bk.cast(ind, 'int64'), -1), bk.cast(cnts, update_cnt.dtype), update_cnt.shape)))
+                    inds = bk.cast(inds, 'int64')
+                    if self.unique_supported:
+                        ind, _, cnts = tf.unique_with_counts(bk.flatten(inds))
+                        tmp_cnt = tf.sparse.to_dense(tf.sparse.reorder(tf.SparseTensor(
+                            bk.expand_dims(ind, -1), bk.cast(cnts, update_cnt.dtype), update_cnt.shape)))
+                    else:
+                        tmp_cnt = bk.map_fn(lambda ele: bk.sum(bk.cast(ele == inds, inputs.dtype)),
+                                            bk.arange(0, update_cnt.shape[0], dtype=inds.dtype), dtype=inputs.dtype)
                     bk.update_add(update_cnt, tmp_cnt)
 
             if self.period is not None and self.call_cnt % self.period == 0:
@@ -383,6 +402,7 @@ class SegEmbedding(AdjustableLayer):
             'max_param_num': self.max_param_num,
             'period': self.period,
             'pave_momentum': self.pave_momentum,
+            'index_learnable': self.index_learnable,
             'embeddings_initializer': initializers.serialize(self.embeddings_initializer),
             'embeddings_regularizer': regularizers.serialize(self.embeddings_regularizer),
             'embeddings_constraint': constraints.serialize(self.embeddings_constraint)

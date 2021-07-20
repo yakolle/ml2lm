@@ -359,7 +359,7 @@ class TnnWithSEGenerator(TnnGenerator):
     def __init__(self, beam_num=20, cur_phase=1, ev_path='.', importance_mode='add', se_norm_handler=BatchNormalization,
                  se_dropout=0.5, se_dropout_handler=Dropout, se_seg_nums=None, feat_idx0=None,
                  embed_trainable_list=None, se_input_val_range=(0., 1.), out_dim_calcor=log_out_dim_calcor,
-                 max_param_num=int(1e6), se_period=100, se_pave_momentum=0.5, **kwargs):
+                 max_param_num=int(1e6), se_period=100, se_pave_momentum=0.5, score_tag='auc', **kwargs):
         super(TnnWithSEGenerator, self).__init__(**kwargs)
 
         self.beam_num = beam_num
@@ -377,6 +377,7 @@ class TnnWithSEGenerator(TnnGenerator):
         self.max_param_num = max_param_num
         self.se_period = se_period
         self.se_pave_momentum = se_pave_momentum
+        self.score_tag = score_tag
 
         if isinstance(self.se_dropout, float):
             self.se_dropout = [self.se_dropout] * self.cur_phase
@@ -386,8 +387,9 @@ class TnnWithSEGenerator(TnnGenerator):
                     joblib.dump(joblib.load(os.path.join(self.ev_path, sn)), sn, compress=('gzip', 3))
 
             for lcn in [SegEmbedding.__name__, 'se']:
-                for score_tag in ['auc_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub', 'co_auc_list']:
-                    __load_scores(f'{lcn}_{score_tag}')
+                for st in [f'{self.score_tag}_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub',
+                           f'co_{self.score_tag}_list']:
+                    __load_scores(f'{lcn}_{st}')
 
             self.se_feat_idx_list = joblib.load(os.path.join(self.ev_path, 'se_feat_idx_list'))
             last_imps = joblib.load(os.path.join(self.ev_path, f'se_imp_list_{self.importance_mode}'))[
@@ -470,7 +472,9 @@ class TnnWithSEGenerator(TnnGenerator):
         return tnn
 
     @staticmethod
-    def evaluate(model, model_name, ev_path, ev_data, co_ev_flag=False, end_time=np.inf, pred_batch_size=1024):
+    def evaluate(model, model_name, ev_path, ev_data,
+                 evaluate_handler=make_evaluate_handler(metrics.roc_auc_score, metric_bias=-1., metric_scale=-1.),
+                 score_tag='auc', co_ev_flag=False, end_time=np.inf, pred_batch_size=1024):
         def weight_getter(_layer, i, j):
             return _layer.embedding_list[i][j]
 
@@ -484,7 +488,8 @@ class TnnWithSEGenerator(TnnGenerator):
             return np.intersect1d(get_feats_idx(_layer, ids1), get_feats_idx(_layer, ids2)).shape[0] > 0
 
         layer = evaluate_by_phase(model, model_name, ev_path, SegEmbedding, weight_getter, wids_getter, duplicate_judge,
-                                  ev_data, co_ev_flag=co_ev_flag, end_time=end_time, pred_batch_size=pred_batch_size)
+                                  ev_data, evaluate_handler=evaluate_handler, score_tag=score_tag,
+                                  co_ev_flag=co_ev_flag, end_time=end_time, pred_batch_size=pred_batch_size)
         if layer is not None:
             def __dump_scores(_score_tag):
                 if os.path.exists(f'{lcn}_{_score_tag}'):
@@ -493,8 +498,8 @@ class TnnWithSEGenerator(TnnGenerator):
                     joblib.dump(scores, f'{scn}_{_score_tag}', compress=('gzip', 3))
 
             lcn, scn = SegEmbedding.__name__, 'se'
-            for score_tag in ['auc_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub', 'co_auc_list']:
-                __dump_scores(score_tag)
+            for st in [f'{score_tag}_list', 'imp_list_add', 'imp_list_co', 'imp_list_co_sub', f'co_{score_tag}_list']:
+                __dump_scores(st)
 
 
 def get_layers_by_classes(model, classes):
@@ -507,7 +512,7 @@ def get_layers_by_classes(model, classes):
 
 def evaluate_by_phase(model, model_name, ev_path, layer_class, weight_getter, wids_getter, duplicate_judge, ev_data,
                       evaluate_handler=make_evaluate_handler(metrics.roc_auc_score, metric_bias=-1., metric_scale=-1.),
-                      score_tag='auc', co_ev_flag=False, end_time=np.inf, pred_batch_size=1024):
+                      score_tag='auc', co_ev_flag=False, end_time=np.inf, pred_batch_size=1024, weight_updater=None):
     model.load_weights(os.path.join(ev_path, f'{model_name}.h5'))
     layer = get_layers_by_classes(model, (layer_class,))[0]
     lcn = layer_class.__name__
@@ -538,12 +543,15 @@ def evaluate_by_phase(model, model_name, ev_path, layer_class, weight_getter, wi
         bk.batch_set_value(list(zip(_ws, [np.zeros_like(_v) for _v in _vs])))
         return _ws, _vs
 
+    if weight_updater is None:
+        weight_updater = _update_weights
+
     ev_score = _calc_score()
 
     if not score_list[layer.phase - 1]:
         for i in wids_getter(layer, layer.phase - 1):
             cur_ids = [(layer.phase - 1, i)]
-            cur_ws, cur_vs_bak = _update_weights(cur_ids)
+            cur_ws, cur_vs_bak = weight_updater(cur_ids)
             cur_score = _calc_score() - ev_score
             score_list[layer.phase - 1].append((cur_ids, cur_score))
             bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))
@@ -577,7 +585,7 @@ def evaluate_by_phase(model, model_name, ev_path, layer_class, weight_getter, wi
                     if score0 > 0 and ((1 == layer.phase and j > i)
                                        or (layer.phase > 1 and not duplicate_judge(layer, cur_ids, ids0))):
                         co_ids = cur_ids + ids0
-                        cur_ws, cur_vs_bak = _update_weights(co_ids)
+                        cur_ws, cur_vs_bak = weight_updater(co_ids)
                         co_score = _calc_score() - ev_score
                         co_score_list[layer.phase - 1].append((co_ids, co_score))
                         bk.batch_set_value(list(zip(cur_ws, cur_vs_bak)))

@@ -157,23 +157,3 @@ def make_unit_box(box_range=(-0.5, 0.5), grad_range=((-0.75, -0.25), (0.25, 0.75
         return y, __grad
 
     return _unit_box
-
-
-def make_gather_in_flow(embed_in_dim=None):
-    def _gather_in_flow(_embed, _indices):
-        y = bk.gather(_embed,
-                      bk.cast(_indices if embed_in_dim is None else bk.clip(_indices, 0, embed_in_dim), 'int32'))
-
-        @tf.custom_gradient
-        def _gather(__indices):
-            in_dim = bk.shape(__indices)
-            in_dim = 1 if 1 == len(in_dim) else in_dim[-1]
-
-            def __grad(dy):
-                dy = bk.sum(dy, axis=-1) / bk.cast(in_dim, dy.dtype)
-
-            return y, __grad
-
-        return (y + _gather(_indices)) / 2
-
-    return _gather_in_flow

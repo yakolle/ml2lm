@@ -1,10 +1,8 @@
 import numpy as np
 import tensorflow as tf
 from keras import backend as bk, initializers, regularizers, constraints
-from keras.layers import Layer
 
 from ml2lm.calc.model.units.gadget import AdjustableLayer
-from ml2lm.calc.model.units.optimizer import make_gather_in_flow
 
 
 class TargetEmbedding(AdjustableLayer):
@@ -243,6 +241,26 @@ def log_out_dim_calcor(seg_nums, max_param_num=None):
     in_dim = np.prod(seg_nums)
     out_dim = feat_num * int(np.log(in_dim))
     return in_dim, max(2, out_dim), seg_nums
+
+
+def make_gather_in_flow(embed_in_dim=None):
+    def _gather_in_flow(_embed, _indices):
+        y = bk.gather(_embed,
+                      bk.cast(_indices if embed_in_dim is None else bk.clip(_indices, 0, embed_in_dim), 'int32'))
+
+        @tf.custom_gradient
+        def _gather(__indices):
+            in_dim = bk.shape(__indices)
+            in_dim = 1 if 1 == len(in_dim) else in_dim[-1]
+
+            def __grad(dy):
+                dy = bk.sum(dy, axis=-1) / bk.cast(in_dim, dy.dtype)
+
+            return y, __grad
+
+        return (y + _gather(_indices)) / 2
+
+    return _gather_in_flow
 
 
 class SegEmbedding(AdjustableLayer):
